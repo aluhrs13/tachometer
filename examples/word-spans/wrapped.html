@@ -1,18 +1,21 @@
 <!DOCTYPE html>
 <!--
-  Variant page: the same 50,000 words, but each one wrapped in a
-  <span class="word"> element. Compared against `plain.html` this should
-  show the per-element DOM/memory overhead of wrapping every word.
+  Variant page: 50,000 words by default, but the count can be overridden
+  via `?n=NUMBER`. Each word is wrapped in a <span class="word"> element.
+  Compared against `plain.html` (or against itself with two different
+  `?n=` values) this should show the per-element DOM/memory overhead of
+  wrapping every word.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>50,000 words (wrapped in spans)</title>
+    <title>Words wrapped in spans</title>
   </head>
   <body>
     <div id="content"></div>
     <script>
-      const N = 50000;
+      const params = new URL(document.location).searchParams;
+      const N = Number(params.get('n')) || 50000;
       const container = document.getElementById('content');
       for (let i = 0; i < N; i++) {
         const span = document.createElement('span');
