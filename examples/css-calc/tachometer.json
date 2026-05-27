@@ -1,0 +1,58 @@
+{
+  "$schema": "../../config.schema.json",
+  "sampleSize": 10,
+  "timeout": 3,
+  "autoSampleConditions": ["1%", "+100KiB"],
+  "benchmarks": [
+    {
+      "name": "tokens",
+      "url": "tokens.html",
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      },
+      "measurement": [
+        {
+          "mode": "expression",
+          "name": "build-time",
+          "expression": "window.tachometerBuildTime"
+        },
+        {
+          "mode": "expression",
+          "name": "total-time",
+          "expression": "window.tachometerResult"
+        },
+        {
+          "mode": "memory",
+          "name": "process-memory",
+          "metric": "malloc.size"
+        }
+      ]
+    },
+    {
+      "name": "calc",
+      "url": "calc.html",
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      },
+      "measurement": [
+        {
+          "mode": "expression",
+          "name": "build-time",
+          "expression": "window.tachometerBuildTime"
+        },
+        {
+          "mode": "expression",
+          "name": "total-time",
+          "expression": "window.tachometerResult"
+        },
+        {
+          "mode": "memory",
+          "name": "process-memory",
+          "metric": "malloc.size"
+        }
+      ]
+    }
+  ]
+}
