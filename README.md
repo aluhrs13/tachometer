@@ -346,7 +346,11 @@ Memory results are rendered with units of `B`/`KiB`/`MiB`/`GiB` (depending on
 magnitude) instead of `ms`. The auto-sample condition syntax accepts byte
 suffixes too — e.g. `--auto-sample-conditions=0KiB,+10KiB,-1%` will stop
 sampling once the absolute byte difference is well-resolved at the 10 KiB
-boundary _or_ once the relative difference is resolved at 1 %.
+boundary _or_ once the relative difference is resolved at 1 %. Supported byte
+suffixes are `B`, `KiB`, `MiB`, and `GiB`. Byte and millisecond absolute
+conditions are partitioned by unit: a `+1KiB` condition only applies to memory
+results and a `+0.1ms` condition only applies to timing results, so mixed
+benchmark suites can share a single condition list safely.
 
 A single benchmark can combine timing and memory measurements by passing an
 array to `measurement` — both are collected from the same page load, and

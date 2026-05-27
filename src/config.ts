@@ -260,18 +260,21 @@ export async function urlFromLocalPath(
  *  - `B`     absolute memory in bytes
  *  - `KiB`   absolute memory in kibibytes (1024 bytes)
  *  - `MiB`   absolute memory in mebibytes (1024*1024 bytes)
+ *  - `GiB`   absolute memory in gibibytes (1024*1024*1024 bytes)
  *
- * Byte-valued conditions are normalised to bytes internally and compared
- * against memory results; millisecond conditions are compared against timing
- * results. The runner picks the appropriate set per-result based on its unit.
+ * Byte-valued conditions are normalised to bytes and partitioned away from
+ * millisecond conditions internally, so `autoSampleConditionsResolved` only
+ * compares byte conditions against memory results and ms conditions against
+ * timing results.
  */
 export function parseAutoSampleConditions(
   strs: string[]
 ): AutoSampleConditions {
-  const absolute = new Set<number>();
+  const absoluteMs = new Set<number>();
+  const absoluteBytes = new Set<number>();
   const relative = new Set<number>();
   for (const str of strs) {
-    const match = str.match(/^([-+]?(?:\d*\.)?\d+)(ms|%|B|KiB|MiB)$/);
+    const match = str.match(/^([-+]?(?:\d*\.)?\d+)(ms|%|B|KiB|MiB|GiB)$/);
     if (!match) {
       throw new Error(`Invalid auto sample condition ${str}`);
     }
@@ -285,14 +288,20 @@ export function parseAutoSampleConditions(
       absOrRel = relative;
     } else if (unit === 'ms') {
       num = Number(numericPart);
-      absOrRel = absolute;
+      absOrRel = absoluteMs;
     } else {
       // Byte units.
       const raw = Number(numericPart);
       const multiplier =
-        unit === 'B' ? 1 : unit === 'KiB' ? 1024 : 1024 * 1024;
+        unit === 'B'
+          ? 1
+          : unit === 'KiB'
+          ? 1024
+          : unit === 'MiB'
+          ? 1024 * 1024
+          : 1024 * 1024 * 1024;
       num = raw * multiplier;
-      absOrRel = absolute;
+      absOrRel = absoluteBytes;
     }
 
     if (str.startsWith('+') || str.startsWith('-') || num === 0) {
@@ -307,7 +316,10 @@ export function parseAutoSampleConditions(
     }
   }
   return {
-    absolute: [...absolute].sort((a, b) => a - b),
+    absolute: {
+      ms: [...absoluteMs].sort((a, b) => a - b),
+      bytes: [...absoluteBytes].sort((a, b) => a - b),
+    },
     relative: [...relative].sort((a, b) => a - b),
   };
 }

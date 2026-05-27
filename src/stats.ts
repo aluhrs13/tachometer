@@ -89,8 +89,15 @@ export function intervalContains(
   return value >= interval.low && value <= interval.high;
 }
 
+/**
+ * Absolute auto-sample conditions, partitioned by unit. A timing result is
+ * checked only against `ms` conditions and a memory result only against
+ * `bytes` conditions, so a user can pass e.g. `0.1ms,+10KiB` and have each
+ * apply to the appropriate set of results without being incorrectly compared
+ * across units.
+ */
 export interface AutoSampleConditions {
-  absolute: number[];
+  absolute: {ms: number[]; bytes: number[]};
   relative: number[];
 }
 
@@ -114,10 +121,16 @@ export function autoSampleConditionsResolved(
   resultStats: ResultStatsWithDifferences[],
   conditions: AutoSampleConditions
 ): boolean {
-  for (const {differences} of resultStats) {
+  for (const stats of resultStats) {
+    const {differences} = stats;
     if (differences === undefined) {
       continue;
     }
+    // Pick the absolute conditions whose unit matches this result. Defaults
+    // to `ms` for backward compatibility when a result has no explicit unit.
+    const unit = stats.result.unit ?? 'ms';
+    const absolute =
+      unit === 'bytes' ? conditions.absolute.bytes : conditions.absolute.ms;
     // TODO We may want to offer more control over which particular set of
     // differences we care about resolving. For the moment, a condition of 1%
     // means we'll try to resolve a 1% difference pairwise in both directions.
@@ -125,7 +138,7 @@ export function autoSampleConditionsResolved(
       if (diff === null) {
         continue;
       }
-      for (const condition of conditions.absolute) {
+      for (const condition of absolute) {
         if (intervalContains(diff.absolute, condition)) {
           return false;
         }

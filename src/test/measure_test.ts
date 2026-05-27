@@ -6,6 +6,7 @@
 
 import {assert} from 'chai';
 import {suite, test} from 'mocha';
+import type * as webdriver from 'selenium-webdriver';
 
 import {measurementName, queryForMemory} from '../measure.js';
 import {MemoryMeasurement} from '../types.js';
@@ -220,14 +221,11 @@ suite('measure', () => {
       });
       let err: Error | undefined;
       try {
-        await queryForMemory(
-          driver as Parameters<typeof queryForMemory>[0],
-          {
-            mode: 'memory',
-            metric: 'nonexistent.size',
-            gcBefore: false,
-          }
-        );
+        await queryForMemory(driver as Parameters<typeof queryForMemory>[0], {
+          mode: 'memory',
+          metric: 'nonexistent.size',
+          gcBefore: false,
+        });
       } catch (e) {
         err = e as Error;
       }
@@ -242,9 +240,82 @@ suite('measure', () => {
       });
       const val = await queryForMemory(
         driver as Parameters<typeof queryForMemory>[0],
-        {mode: 'memory', metric: 'malloc.size', gcBefore: false}
+        {mode: 'memory', metric: 'malloc.size', gcBefore: false},
+        {timeoutMs: 50}
       );
       assert.isUndefined(val);
+    });
+
+    test('issues only one dump request even when polling internally', async () => {
+      // Count how many times Tracing.requestMemoryDump is dispatched. Even
+      // when the dump events take several poll intervals to arrive, we should
+      // only request one dump per queryForMemory call.
+      let dumpRequests = 0;
+      // First two `get()` calls return empty (simulating the dump taking
+      // ~200ms to appear in the performance log), then the dump events
+      // arrive, then the post-find drain returns empty.
+      const chunks: Array<Array<{message: string}>> = [
+        [],
+        [],
+        [
+          logEntry(processNameEvent(1, 'Renderer')),
+          logEntry(memDump(1, 'g', {malloc: {size: '7'}})),
+        ],
+        [],
+      ];
+      let chunkIndex = 0;
+      const driver = {
+        sendDevToolsCommand: async (cmd: string) => {
+          if (cmd === 'Tracing.requestMemoryDump') {
+            dumpRequests++;
+            return {dumpGuid: 'g', success: true};
+          }
+          return undefined;
+        },
+        manage() {
+          return {
+            logs() {
+              return {
+                get: async () => {
+                  if (chunkIndex >= chunks.length) return [];
+                  return chunks[chunkIndex++];
+                },
+              };
+            },
+          };
+        },
+      };
+      const val = await queryForMemory(
+        driver as unknown as Parameters<typeof queryForMemory>[0],
+        {mode: 'memory', metric: 'malloc.size', gcBefore: false},
+        {timeoutMs: 2000}
+      );
+      assert.equal(val, 0x7);
+      assert.equal(dumpRequests, 1);
+    });
+
+    test('forwards consumed performance log entries to the accumulator', async () => {
+      const driver = fakeDriver({
+        dumpGuid: 'g',
+        logChunks: [
+          [],
+          [
+            logEntry(processNameEvent(1, 'Renderer')),
+            logEntry(memDump(1, 'g', {malloc: {size: '5'}})),
+          ],
+          [],
+        ],
+      });
+      const consumedPerfLog: webdriver.logging.Entry[] = [];
+      const val = await queryForMemory(
+        driver as Parameters<typeof queryForMemory>[0],
+        {mode: 'memory', metric: 'malloc.size', gcBefore: false},
+        {consumedPerfLog}
+      );
+      assert.equal(val, 0x5);
+      // Two entries should have been forwarded: the process_name event and
+      // the memory dump event.
+      assert.equal(consumedPerfLog.length, 2);
     });
 
     test('throws on non-Chromium driver', async () => {

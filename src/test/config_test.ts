@@ -39,7 +39,7 @@ suite('makeConfig', function () {
       root: '.',
       resolveBareModules: true,
       forceCleanNpmInstall: false,
-      autoSampleConditions: {absolute: [], relative: [0]},
+      autoSampleConditions: {absolute: {ms: [], bytes: []}, relative: [0]},
       remoteAccessibleHost: '',
       jsonFile: '',
       legacyJsonFile: '',
@@ -84,7 +84,7 @@ suite('makeConfig', function () {
       root: testData,
       resolveBareModules: true,
       forceCleanNpmInstall: false,
-      autoSampleConditions: {absolute: [], relative: [0]},
+      autoSampleConditions: {absolute: {ms: [], bytes: []}, relative: [0]},
       remoteAccessibleHost: '',
       jsonFile: '',
       legacyJsonFile: '',
@@ -130,7 +130,7 @@ suite('makeConfig', function () {
       root: testData,
       resolveBareModules: true,
       forceCleanNpmInstall: false,
-      autoSampleConditions: {absolute: [], relative: [0]},
+      autoSampleConditions: {absolute: {ms: [], bytes: []}, relative: [0]},
       remoteAccessibleHost: '',
       jsonFile: '',
       legacyJsonFile: '',
@@ -186,7 +186,7 @@ suite('makeConfig', function () {
       timeout: 3,
       root: testData,
       resolveBareModules: true,
-      autoSampleConditions: {absolute: [], relative: [0]},
+      autoSampleConditions: {absolute: {ms: [], bytes: []}, relative: [0]},
       remoteAccessibleHost: '',
       // TODO(aomarks) Be consistent about undefined vs unset.
       githubCheck: undefined,
@@ -233,7 +233,10 @@ suite('makeConfig', function () {
       timeout: 3,
       root: testData,
       resolveBareModules: true,
-      autoSampleConditions: {absolute: [], relative: [-0.1, 0, 0.1]},
+      autoSampleConditions: {
+        absolute: {ms: [], bytes: []},
+        relative: [-0.1, 0, 0.1],
+      },
       remoteAccessibleHost: '',
       // TODO(aomarks) Be consistent about undefined vs unset.
       githubCheck: undefined,
@@ -269,70 +272,70 @@ suite('makeConfig', function () {
 suite('parseAutoSampleConditions', function () {
   test('0ms', () => {
     assert.deepEqual(parseAutoSampleConditions(['0ms']), {
-      absolute: [0],
+      absolute: {ms: [0], bytes: []},
       relative: [],
     });
   });
 
   test('0.1ms', () => {
     assert.deepEqual(parseAutoSampleConditions(['0.1ms']), {
-      absolute: [-0.1, 0.1],
+      absolute: {ms: [-0.1, 0.1], bytes: []},
       relative: [],
     });
   });
 
   test('+0.1ms', () => {
     assert.deepEqual(parseAutoSampleConditions(['+0.1ms']), {
-      absolute: [0.1],
+      absolute: {ms: [0.1], bytes: []},
       relative: [],
     });
   });
 
   test('-0.1ms', () => {
     assert.deepEqual(parseAutoSampleConditions(['-0.1ms']), {
-      absolute: [-0.1],
+      absolute: {ms: [-0.1], bytes: []},
       relative: [],
     });
   });
 
   test('0ms,0.1,1ms', () => {
     assert.deepEqual(parseAutoSampleConditions(['0ms', '0.1ms', '1ms']), {
-      absolute: [-1, -0.1, 0, 0.1, 1],
+      absolute: {ms: [-1, -0.1, 0, 0.1, 1], bytes: []},
       relative: [],
     });
   });
 
   test('0%', () => {
     assert.deepEqual(parseAutoSampleConditions(['0%']), {
-      absolute: [],
+      absolute: {ms: [], bytes: []},
       relative: [0],
     });
   });
 
   test('1%', () => {
     assert.deepEqual(parseAutoSampleConditions(['1%']), {
-      absolute: [],
+      absolute: {ms: [], bytes: []},
       relative: [-0.01, 0.01],
     });
   });
 
   test('+1%', () => {
     assert.deepEqual(parseAutoSampleConditions(['+1%']), {
-      absolute: [],
+      absolute: {ms: [], bytes: []},
       relative: [0.01],
     });
   });
 
   test('-1%', () => {
     assert.deepEqual(parseAutoSampleConditions(['-1%']), {
-      absolute: [],
+      absolute: {ms: [], bytes: []},
       relative: [-0.01],
     });
   });
 
   test('0%,1%,10%', () => {
     assert.deepEqual(parseAutoSampleConditions(['0%', '1%', '10%']), {
-      absolute: [],
+      absolute: {ms: [], bytes: []},
       relative: [-0.1, -0.01, 0, 0.01, 0.1],
     });
   });
@@ -341,7 +344,7 @@ suite('parseAutoSampleConditions', function () {
     assert.deepEqual(
       parseAutoSampleConditions(['0ms', '0.1ms', '1ms', '0%', '1%', '10%']),
       {
-        absolute: [-1, -0.1, 0, 0.1, 1],
+        absolute: {ms: [-1, -0.1, 0, 0.1, 1], bytes: []},
         relative: [-0.1, -0.01, 0, 0.01, 0.1],
       }
     );
@@ -355,22 +358,36 @@ suite('parseAutoSampleConditions', function () {
     assert.throws(() => parseAutoSampleConditions(['4']));
   });
 
-  test('byte units: B, KiB, MiB', () => {
+  test('byte units: B, KiB, MiB, GiB', () => {
     assert.deepEqual(parseAutoSampleConditions(['0B']), {
-      absolute: [0],
+      absolute: {ms: [], bytes: [0]},
       relative: [],
     });
     assert.deepEqual(parseAutoSampleConditions(['+10KiB']), {
-      absolute: [10 * 1024],
+      absolute: {ms: [], bytes: [10 * 1024]},
       relative: [],
     });
     assert.deepEqual(parseAutoSampleConditions(['1MiB']), {
-      absolute: [-1024 * 1024, 1024 * 1024],
+      absolute: {ms: [], bytes: [-1024 * 1024, 1024 * 1024]},
+      relative: [],
+    });
+    assert.deepEqual(parseAutoSampleConditions(['2GiB']), {
+      absolute: {
+        ms: [],
+        bytes: [-2 * 1024 * 1024 * 1024, 2 * 1024 * 1024 * 1024],
+      },
       relative: [],
     });
     assert.deepEqual(parseAutoSampleConditions(['-1KiB', '+1KiB', '1%']), {
-      absolute: [-1024, 1024],
+      absolute: {ms: [], bytes: [-1024, 1024]},
       relative: [-0.01, 0.01],
+    });
+  });
+
+  test('mixed ms and byte conditions are partitioned by unit', () => {
+    assert.deepEqual(parseAutoSampleConditions(['0.1ms', '+1KiB']), {
+      absolute: {ms: [-0.1, 0.1], bytes: [1024]},
+      relative: [],
     });
   });
 });

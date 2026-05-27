@@ -18,11 +18,17 @@ import {throwUnreachable} from './util.js';
  * Try to take a measurement in milliseconds from the given browser. Returns
  * undefined if the measurement is not available (which may just mean we need to
  * wait some more time).
+ *
+ * `consumedPerfLog`, when supplied, is appended to with any `performance`
+ * channel log entries that this call consumed (currently only memory
+ * measurements drain the performance log). This lets a caller that also wants
+ * to write a `--trace` file see the entries that would otherwise be lost.
  */
 export async function measure(
   driver: webdriver.WebDriver,
   measurement: Measurement,
-  server: Server | undefined
+  server: Server | undefined,
+  consumedPerfLog?: webdriver.logging.Entry[]
 ): Promise<number | undefined> {
   switch (measurement.mode) {
     case 'callback':
@@ -35,7 +41,7 @@ export async function measure(
     case 'performance':
       return queryForPerformanceEntry(driver, measurement);
     case 'memory':
-      return queryForMemory(driver, measurement);
+      return queryForMemory(driver, measurement, {consumedPerfLog});
   }
   throwUnreachable(
     measurement,
@@ -316,10 +322,13 @@ function availableAllocators(events: MemoryDumpEvent[]): string[] {
 
 /**
  * Drain entries from the `performance` log channel. Used to scoop up the
- * trace events emitted while waiting for a memory dump to complete.
+ * trace events emitted while waiting for a memory dump to complete. When
+ * `accumulator` is supplied, drained entries are appended to it so the caller
+ * can later persist them (e.g. write a `--trace` file).
  */
 async function drainPerformanceLog(
-  driver: webdriver.WebDriver
+  driver: webdriver.WebDriver,
+  accumulator?: webdriver.logging.Entry[]
 ): Promise<webdriver.logging.Entry[]> {
   let all: webdriver.logging.Entry[] = [];
   // Loop until we get back an empty chunk to ensure we have everything.
@@ -330,29 +339,60 @@ async function drainPerformanceLog(
       break;
     }
     all = all.concat(chunk);
+    if (accumulator !== undefined) {
+      for (const entry of chunk) {
+        accumulator.push(entry);
+      }
+    }
   }
   return all;
 }
 
 /**
+ * How long, in total, we'll wait for a Chromium memory dump's trace events
+ * to arrive after we triggered the dump. This is intentionally a hard cap
+ * inside one call so the outer runner poll loop doesn't end up re-issuing
+ * `Tracing.requestMemoryDump` repeatedly while a slow dump is in flight.
+ */
+const MEMORY_DUMP_TIMEOUT_MS = 5000;
+
+/**
+ * How frequently we'll poll the performance log channel waiting for dump
+ * events after triggering a dump.
+ */
+const MEMORY_DUMP_POLL_INTERVAL_MS = 100;
+
+/**
  * Trigger a memory-infra dump via the Chrome DevTools Protocol and read the
  * requested metric out of it.
  *
- * Returns the value in bytes. Returns `undefined` if no dump matching the
- * requested GUID is found (callers may retry).
+ * Returns the value in bytes, or `undefined` when no dump matching the
+ * requested GUID arrived within the internal timeout (callers may then retry
+ * on a fresh page attempt). The function does its own bounded polling so the
+ * runner's tight poll loop does not re-trigger memory dumps every few
+ * milliseconds.
  */
 export async function queryForMemory(
   driver: webdriver.WebDriver,
-  measurement: MemoryMeasurement
+  measurement: MemoryMeasurement,
+  options: {
+    consumedPerfLog?: webdriver.logging.Entry[];
+    /**
+     * Maximum time, in milliseconds, to wait for dump trace events to arrive
+     * after triggering the dump. Defaults to {@link MEMORY_DUMP_TIMEOUT_MS}.
+     */
+    timeoutMs?: number;
+  } = {}
 ): Promise<number | undefined> {
-  const driverWithCdp =
-    driver as unknown as WebDriverWithSendDevToolsCommand;
+  const driverWithCdp = driver as unknown as WebDriverWithSendDevToolsCommand;
   if (!driverWithCdp.sendDevToolsCommand) {
     throw new Error(
       'Memory measurement requires a Chromium-based browser ' +
         '(chrome or edge); this WebDriver does not expose sendDevToolsCommand.'
     );
   }
+
+  const consumedPerfLog = options.consumedPerfLog;
 
   const gcBefore = measurement.gcBefore !== false;
   if (gcBefore) {
@@ -368,8 +408,9 @@ export async function queryForMemory(
   }
 
   // Drain any pending performance log entries so the dump we're about to
-  // request is easier to locate.
-  await drainPerformanceLog(driver);
+  // request is easier to locate. These predate the dump, so we forward them
+  // to the accumulator too — they're still valid trace events.
+  await drainPerformanceLog(driver, consumedPerfLog);
 
   const dumpResult = (await driverWithCdp.sendDevToolsCommand(
     'Tracing.requestMemoryDump',
@@ -384,29 +425,57 @@ export async function queryForMemory(
       ? dumpResult.dumpGuid
       : undefined;
 
-  // Give the tracing pipeline a moment to flush dump events into the
-  // performance log channel.
-  await new Promise((r) => setTimeout(r, 100));
-
-  const entries = await drainPerformanceLog(driver);
+  // Poll the performance log until we see dump events matching our GUID, or
+  // we hit the internal timeout. We do this here rather than relying on the
+  // runner's outer poll loop because each iteration of the outer loop would
+  // otherwise issue another `Tracing.requestMemoryDump`, which is expensive
+  // and pollutes the trace.
   const events: Array<MemoryDumpEvent | ProcessMetadataEvent> = [];
-  for (const entry of entries) {
-    let parsed: CdpLogMessage;
-    try {
-      parsed = JSON.parse(entry.message);
-    } catch {
-      continue;
+  const accumulateEvents = (entries: webdriver.logging.Entry[]) => {
+    for (const entry of entries) {
+      let parsed: CdpLogMessage;
+      try {
+        parsed = JSON.parse(entry.message);
+      } catch {
+        continue;
+      }
+      if (
+        parsed.message?.method !== 'Tracing.dataCollected' ||
+        !parsed.message.params
+      ) {
+        continue;
+      }
+      events.push(
+        parsed.message.params as unknown as
+          | MemoryDumpEvent
+          | ProcessMetadataEvent
+      );
     }
-    if (
-      parsed.message?.method !== 'Tracing.dataCollected' ||
-      !parsed.message.params
-    ) {
-      continue;
+  };
+
+  const deadline = Date.now() + (options.timeoutMs ?? MEMORY_DUMP_TIMEOUT_MS);
+  let haveMatchingDump = false;
+  while (true) {
+    await new Promise((r) => setTimeout(r, MEMORY_DUMP_POLL_INTERVAL_MS));
+    const entries = await drainPerformanceLog(driver, consumedPerfLog);
+    accumulateEvents(entries);
+    if (dumpGuid !== undefined) {
+      haveMatchingDump = events.some(
+        (e) =>
+          (e.ph === 'v' || e.ph === 'V') &&
+          ((e as MemoryDumpEvent).id === dumpGuid ||
+            (e as MemoryDumpEvent).dump_guid === dumpGuid)
+      );
+    } else {
+      // No GUID returned by CDP: fall back to "have we seen any dump event?".
+      haveMatchingDump = events.some((e) => e.ph === 'v' || e.ph === 'V');
     }
-    const ev = parsed.message.params as unknown as
-      | MemoryDumpEvent
-      | ProcessMetadataEvent;
-    events.push(ev);
+    if (haveMatchingDump) {
+      break;
+    }
+    if (Date.now() >= deadline) {
+      break;
+    }
   }
 
   const allDumps = events.filter(
@@ -448,7 +517,9 @@ export async function queryForMemory(
     }
     throw new Error(
       `No memory dump found for process "${desired}". ` +
-        `Known process roles: ${[...new Set(roles.values())].join(', ') || '<none>'}.`
+        `Known process roles: ${
+          [...new Set(roles.values())].join(', ') || '<none>'
+        }.`
     );
   }
 
@@ -468,7 +539,9 @@ export async function queryForMemory(
   if (!found) {
     throw new Error(
       `Memory metric "${measurement.metric}" not found in dump. ` +
-        `Available top-level allocators: ${availableAllocators(matchingDumps).join(', ')}.`
+        `Available top-level allocators: ${availableAllocators(
+          matchingDumps
+        ).join(', ')}.`
     );
   }
   return total;

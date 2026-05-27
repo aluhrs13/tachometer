@@ -97,7 +97,7 @@ suite('config', () => {
         sampleSize: 52,
         timeout: 7,
         autoSampleConditions: {
-          absolute: [-1, 0, 1],
+          absolute: {ms: [-1, 0, 1], bytes: []},
           relative: [-0.02, 0.02, 0.03],
         },
         resolveBareModules: false,

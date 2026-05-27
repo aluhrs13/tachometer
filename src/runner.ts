@@ -138,7 +138,10 @@ export class Runner {
     const {specs, bar} = this;
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i];
-      if (spec.browser.trace !== undefined && spec.browser.trace.writeLogs !== false) {
+      if (
+        spec.browser.trace !== undefined &&
+        spec.browser.trace.writeLogs !== false
+      ) {
         await fsExtra.mkdirp(spec.browser.trace.logDir);
       }
 
@@ -280,6 +283,11 @@ export class Runner {
     let session: Session;
     let pendingMeasurements;
     let measurementResults: number[];
+    // Performance-log entries that were consumed by measurements during this
+    // attempt (currently only memory measurements drain the log). We hand
+    // these to `capturePerfTraces` so they survive when `--trace` and
+    // `--measure=memory` are used together.
+    let consumedPerfLog: webdriver.logging.Entry[] = [];
 
     // We'll try N attempts per page. Within each attempt, we'll try to collect
     // all of the measurements by polling. If we hit our per-attempt timeout
@@ -290,6 +298,7 @@ export class Runner {
       // New attempt. Reset all measurements and results.
       pendingMeasurements = new Set(spec.measurement);
       measurementResults = [];
+      consumedPerfLog = [];
       await openAndSwitchToNewTab(driver, spec.browser);
       await driver.get(url);
       for (
@@ -309,7 +318,12 @@ export class Runner {
             continue;
           }
           const measurement = spec.measurement[measurementIndex];
-          const result = await measure(driver, measurement, server);
+          const result = await measure(
+            driver,
+            measurement,
+            server,
+            consumedPerfLog
+          );
           if (result !== undefined) {
             measurementResults[measurementIndex] = result;
             pendingMeasurements.delete(measurement);
@@ -317,7 +331,7 @@ export class Runner {
         }
       }
 
-      await this.capturePerfTraces(spec, driver, sampleLabel);
+      await this.capturePerfTraces(spec, driver, sampleLabel, consumedPerfLog);
 
       // Close the active tab (but not the whole browser, since the
       // initial blank tab is still open).
@@ -377,13 +391,21 @@ export class Runner {
   async capturePerfTraces(
     spec: BenchmarkSpec,
     driver: webdriver.WebDriver,
-    sampleLabel: string
+    sampleLabel: string,
+    alreadyConsumed: webdriver.logging.Entry[] = []
   ) {
-    if (spec.browser.trace === undefined || spec.browser.trace.writeLogs === false) {
+    if (
+      spec.browser.trace === undefined ||
+      spec.browser.trace.writeLogs === false
+    ) {
       return;
     }
 
-    let perfEntries: webdriver.logging.Entry[] = [];
+    // Start from any entries that were already drained from the performance
+    // log by a measurement (e.g. memory). Those entries are unavailable for a
+    // second `logs().get('performance')` call, so without this the trace file
+    // would be missing all events that arrived during the measurement window.
+    let perfEntries: webdriver.logging.Entry[] = [...alreadyConsumed];
     let newPerfEntries: webdriver.logging.Entry[];
     do {
       newPerfEntries = await driver.manage().logs().get('performance');
