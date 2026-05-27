@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!--
+  Baseline page: 50,000 words rendered as a single text node.
+
+  Used to compare DOM/memory cost against `wrapped.html`, which wraps each
+  word in a <span class="word"> element.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>50,000 words (plain text)</title>
+  </head>
+  <body>
+    <div id="content"></div>
+    <script>
+      const N = 50000;
+      const words = new Array(N);
+      for (let i = 0; i < N; i++) {
+        words[i] = 'word' + i;
+      }
+      document.getElementById('content').textContent = words.join(' ');
+      // Signal completion to tachometer's `expression` measurement mode.
+      window.tachometerResult = performance.now();
+    </script>
+  </body>
+</html>
