@@ -14,6 +14,7 @@
   <body>
     <div id="content"></div>
     <script>
+      const t0 = performance.now();
       const params = new URL(document.location).searchParams;
       const N = Number(params.get('n')) || 50000;
       const container = document.getElementById('content');
@@ -26,8 +27,19 @@
           container.appendChild(document.createTextNode(' '));
         }
       }
-      // Signal completion to tachometer's `expression` measurement mode.
-      window.tachometerResult = performance.now();
+      const buildTime = performance.now() - t0;
+      // Defer signalling completion until after the first paint commit so
+      // that any memory measurements running on top of this page capture
+      // post-paint state (LayoutObjects, DisplayItems, raster, etc.)
+      // rather than the in-between state where the DOM exists but nothing
+      // has been laid out or painted yet. A single requestAnimationFrame
+      // fires *before* the next paint; the nested one therefore fires
+      // *after* that paint has committed.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.tachometerResult = buildTime;
+        });
+      });
     </script>
   </body>
 </html>

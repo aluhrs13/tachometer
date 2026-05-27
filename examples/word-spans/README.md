@@ -7,9 +7,21 @@ Compares two pages that contain the same 50,000 words:
   `<span class="word">` element. The number of words can be overridden
   with `?n=NUMBER` (default 50,000).
 
-Both pages build their DOM synchronously inside a `<script>` tag and set
-`window.tachometerResult = performance.now()` so tachometer can use the
-`expression` measurement to capture the build time.
+Both pages build their DOM synchronously inside a `<script>` tag, then
+defer signalling `window.tachometerResult` with a double
+`requestAnimationFrame` so that any memory measurement running on top
+of the page captures the **post-paint** state of the renderer. This
+matters: before paint, the DOM exists but `LayoutObject`s,
+`DisplayItem`s, and raster buffers do not. Triggering the dump too
+early hides a large fraction of the memory cost that scales with DOM
+size. For our 50,000-word wrapped page that's the difference between
+~3 MiB and ~45 MiB of `blink_gc.size`.
+
+> **Tip for your own memory benchmarks:** if your page builds DOM, lays
+> out, or paints in response to scripting, signal completion only
+> after a double `requestAnimationFrame`. A single rAF fires *before*
+> the next paint; the nested one therefore fires *after* it has
+> committed.
 
 ## Configs
 
