@@ -45,7 +45,15 @@ export async function runNpm(
   args: string[],
   options?: ExecFileOptions
 ): Promise<string | Buffer> {
-  return promisify(execFile)(npmCmd, args, options).then(({stdout}) => stdout);
+  // On Windows, Node 20+ refuses to `execFile` `.cmd`/`.bat` shims without
+  // `shell: true` (mitigation for CVE-2024-27980). All callers of `runNpm`
+  // pass internally constructed arguments, not user input, so enabling the
+  // shell is safe here.
+  const shellOption: ExecFileOptions =
+    process.platform === 'win32' ? {shell: true} : {};
+  return promisify(execFile)(npmCmd, args, {...shellOption, ...options}).then(
+    ({stdout}) => stdout
+  );
 }
 
 /**

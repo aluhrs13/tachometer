@@ -167,9 +167,22 @@ export function computeDifferences(
   return stats.map((result) => {
     return {
       ...result,
-      differences: stats.map((other) =>
-        other === result ? null : computeDifference(other.stats, result.stats)
-      ),
+      differences: stats.map((other) => {
+        if (other === result) {
+          return null;
+        }
+        // Don't compute a difference between results with different units
+        // (e.g. timing vs memory). The numeric subtraction would still
+        // succeed, but the resulting "percent change" and "absolute
+        // difference" would be meaningless because they mix unrelated
+        // quantities.
+        const aUnit = other.result.unit ?? 'ms';
+        const bUnit = result.result.unit ?? 'ms';
+        if (aUnit !== bUnit) {
+          return null;
+        }
+        return computeDifference(other.stats, result.stats);
+      }),
     };
   });
 }

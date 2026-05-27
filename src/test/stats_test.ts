@@ -76,6 +76,45 @@ suite('statistics', function () {
   });
 });
 
+suite('computeDifferences', () => {
+  const makeResult = (millis: number[], unit: 'ms' | 'bytes') => ({
+    stats: summaryStats(millis),
+    result: {
+      name: unit,
+      // The rest of BenchmarkResult is unused by computeDifferences.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...({} as any),
+      unit,
+      millis,
+    },
+  });
+
+  test('returns null for different-unit pairs', async () => {
+    // Import lazily to avoid circular import at the top of the file.
+    const {computeDifferences} = await import('../stats.js');
+    const a = makeResult([10, 11, 12], 'ms');
+    const b = makeResult([1000, 1100, 1200], 'bytes');
+    const c = makeResult([20, 21, 22], 'ms');
+    const out = computeDifferences([
+      a as Parameters<typeof computeDifferences>[0][0],
+      b as Parameters<typeof computeDifferences>[0][0],
+      c as Parameters<typeof computeDifferences>[0][0],
+    ]);
+    // a (ms) vs b (bytes) and c (ms) vs b (bytes) should be null.
+    assert.isNull(out[0].differences[1]);
+    assert.isNull(out[1].differences[0]);
+    assert.isNull(out[1].differences[2]);
+    assert.isNull(out[2].differences[1]);
+    // Self-comparisons are always null.
+    assert.isNull(out[0].differences[0]);
+    assert.isNull(out[1].differences[1]);
+    assert.isNull(out[2].differences[2]);
+    // Same-unit pairs (a vs c) should NOT be null.
+    assert.isNotNull(out[0].differences[2]);
+    assert.isNotNull(out[2].differences[0]);
+  });
+});
+
 /**
  * Generate random numbers from the normal distribution with the given mean and
  * standard deviation.

@@ -197,6 +197,7 @@ export async function makeDriver(
   const webdriverName = webdriverBrowserNames.get(config.name) || config.name;
   builder.forBrowser(webdriverName);
   builder.setChromeOptions(chromeOpts(config));
+  builder.setEdgeOptions(edgeOpts(config));
   builder.setFirefoxOptions(firefoxOpts(config));
   if (config.remoteUrl !== undefined) {
     builder.usingServer(config.remoteUrl);
@@ -227,11 +228,10 @@ export async function makeDriver(
   return driver;
 }
 
-function chromeOpts(config: BrowserConfig): chrome.Options {
-  const opts = new chrome.Options();
-  if (config.binary) {
-    opts.setChromeBinaryPath(config.binary);
-  }
+function applyChromiumOpts(
+  opts: chrome.Options | edge.Options,
+  config: BrowserConfig
+): void {
   if (config.headless === true) {
     opts.addArguments('--headless');
   }
@@ -258,6 +258,23 @@ function chromeOpts(config: BrowserConfig): chrome.Options {
   if (config.profile) {
     opts.addArguments(`user-data-dir=${config.profile}`);
   }
+}
+
+function chromeOpts(config: BrowserConfig): chrome.Options {
+  const opts = new chrome.Options();
+  if (config.binary) {
+    opts.setChromeBinaryPath(config.binary);
+  }
+  applyChromiumOpts(opts, config);
+  return opts;
+}
+
+function edgeOpts(config: BrowserConfig): edge.Options {
+  const opts = new edge.Options();
+  if (config.binary) {
+    opts.setEdgeChromiumBinaryPath(config.binary);
+  }
+  applyChromiumOpts(opts, config);
   return opts;
 }
 
