@@ -17,7 +17,7 @@ import {
   openAndSwitchToNewTab,
 } from './browser.js';
 import {measure, measurementName} from './measure.js';
-import {BenchmarkResult, BenchmarkSpec} from './types.js';
+import {BenchmarkResult, BenchmarkSpec, unitForMeasurement} from './types.js';
 import {formatCsvStats, formatCsvRaw} from './csv.js';
 import {
   ResultStatsWithDifferences,
@@ -138,7 +138,7 @@ export class Runner {
     const {specs, bar} = this;
     for (let i = 0; i < specs.length; i++) {
       const spec = specs[i];
-      if (spec.browser.trace !== undefined) {
+      if (spec.browser.trace !== undefined && spec.browser.trace.writeLogs !== false) {
         await fsExtra.mkdirp(spec.browser.trace.logDir);
       }
 
@@ -367,6 +367,7 @@ export class Runner {
           ? spec.url.version.label
           : '',
       millis: [measurementResults[measurementIndex]],
+      unit: unitForMeasurement(measurement),
       bytesSent: session ? session.bytesSent : 0,
       browser: spec.browser,
       userAgent: session ? session.userAgent : '',
@@ -378,7 +379,7 @@ export class Runner {
     driver: webdriver.WebDriver,
     sampleLabel: string
   ) {
-    if (spec.browser.trace === undefined) {
+    if (spec.browser.trace === undefined || spec.browser.trace.writeLogs === false) {
       return;
     }
 

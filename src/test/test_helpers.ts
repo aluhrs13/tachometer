@@ -13,6 +13,7 @@ import {
   ResultStatsWithDifferences,
   summaryStats,
 } from '../stats.js';
+import {unitForMeasurement} from '../types.js';
 
 import * as url from 'url';
 const __dirname = url.fileURLToPath(new URL('.', import.meta.url));
@@ -83,6 +84,7 @@ export async function fakeResults(
               ? url.version.label
               : '',
           millis,
+          unit: unitForMeasurement(measurement[measurementIndex]),
           bytesSent,
           browser,
           userAgent: userAgents.get(browser.name) || '',

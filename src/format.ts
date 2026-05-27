@@ -15,7 +15,7 @@ import {
   ResultStats,
   ResultStatsWithDifferences,
 } from './stats.js';
-import {BenchmarkSpec, BenchmarkResult} from './types.js';
+import {BenchmarkSpec, BenchmarkResult, Unit} from './types.js';
 
 export const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'].map(
   (frame) => ansi.format(`[blue]{${frame}}`)
@@ -91,7 +91,7 @@ export function automaticResultTable(results: ResultStats[]): AutomaticResults {
           if (diff === null) {
             return ansi.format('\n[gray]{-}       ');
           }
-          return formatDifference(diff);
+          return formatDifference(diff, r);
         },
       });
     }
@@ -288,23 +288,29 @@ const runtimeConfidenceIntervalDimension: Dimension = {
   tableConfig: {
     alignment: 'right',
   },
-  format: (r: ResultStats) => formatConfidenceInterval(r.stats.meanCI, milli),
+  format: (r: ResultStats) =>
+    formatConfidenceInterval(r.stats.meanCI, valueFormatterFor(r)),
 };
 
-function formatDifference({absolute, relative}: Difference): string {
+function valueFormatterFor(r: ResultStats): (n: number) => string {
+  return (r.result.unit ?? 'ms') === 'bytes' ? bytes : milli;
+}
+
+function formatDifference({absolute, relative}: Difference, r: ResultStats): string {
+  const fmtAbs = valueFormatterFor(r);
   let word, rel, abs;
   if (absolute.low > 0 && relative.low > 0) {
     word = `[bold red]{slower}`;
     rel = formatConfidenceInterval(relative, percent);
-    abs = formatConfidenceInterval(absolute, milli);
+    abs = formatConfidenceInterval(absolute, fmtAbs);
   } else if (absolute.high < 0 && relative.high < 0) {
     word = `[bold green]{faster}`;
     rel = formatConfidenceInterval(negate(relative), percent);
-    abs = formatConfidenceInterval(negate(absolute), milli);
+    abs = formatConfidenceInterval(negate(absolute), fmtAbs);
   } else {
     word = `[bold blue]{unsure}`;
     rel = formatConfidenceInterval(relative, (n) => colorizeSign(n, percent));
-    abs = formatConfidenceInterval(absolute, (n) => colorizeSign(n, milli));
+    abs = formatConfidenceInterval(absolute, (n) => colorizeSign(n, fmtAbs));
   }
 
   return ansi.format(`${word}\n${rel}\n${abs}`);
@@ -316,6 +322,33 @@ function percent(n: number): string {
 
 function milli(n: number): string {
   return n.toFixed(2) + 'ms';
+}
+
+/**
+ * Format a byte count using B/KiB/MiB/GiB depending on magnitude. Negative
+ * values (used when rendering differences as a positive "less" delta) are
+ * formatted as the magnitude with a leading minus sign.
+ */
+export function bytes(n: number): string {
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs < 1024) {
+    return `${sign}${abs.toFixed(0)} B`;
+  }
+  if (abs < 1024 * 1024) {
+    return `${sign}${(abs / 1024).toFixed(2)} KiB`;
+  }
+  if (abs < 1024 * 1024 * 1024) {
+    return `${sign}${(abs / (1024 * 1024)).toFixed(2)} MiB`;
+  }
+  return `${sign}${(abs / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
+}
+
+/**
+ * Format a numeric value according to the given unit.
+ */
+export function formatValue(n: number, unit: Unit): string {
+  return unit === 'bytes' ? bytes(n) : milli(n);
 }
 
 function negate(ci: ConfidenceInterval): ConfidenceInterval {

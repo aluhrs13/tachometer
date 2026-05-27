@@ -17,6 +17,9 @@ import {AutoSampleConditions} from './stats.js';
 import {BenchmarkSpec} from './types.js';
 import {fileKind} from './util.js';
 
+/** Browsers that support the Chromium memory-infra subsystem. */
+const memoryInfraBrowsers = new Set(['chrome', 'edge']);
+
 /**
  * Validated and fully specified configuration.
  */
@@ -124,6 +127,7 @@ export async function makeConfig(opts: Opts): Promise<Config> {
   }
 
   for (const spec of config.benchmarks) {
+    let hasMemoryMeasurement = false;
     for (const measurement of spec.measurement) {
       if (
         measurement.mode === 'performance' &&
@@ -134,6 +138,39 @@ export async function makeConfig(opts: Opts): Promise<Config> {
           `Browser ${spec.browser.name} does not support the ` +
             `first contentful paint (FCP) measurement`
         );
+      }
+      if (measurement.mode === 'memory') {
+        hasMemoryMeasurement = true;
+        if (!memoryInfraBrowsers.has(spec.browser.name)) {
+          throw new Error(
+            `Browser ${spec.browser.name} does not support memory ` +
+              `measurement. Only chrome and edge support Chromium's ` +
+              `memory-infra tracing.`
+          );
+        }
+      }
+    }
+
+    // Ensure the trace pipeline is enabled with the memory-infra categories
+    // when any memory measurement is requested. We piggyback on the existing
+    // trace plumbing (which routes through Chrome's performance log) but do
+    // not require the user to also pass --trace.
+    if (hasMemoryMeasurement) {
+      const extraCats = defaults.memoryTraceCategories;
+      if (spec.browser.trace === undefined) {
+        spec.browser.trace = {
+          categories: [...extraCats],
+          logDir: defaults.traceLogDir,
+          writeLogs: false,
+        };
+      } else {
+        const cats = new Set(spec.browser.trace.categories);
+        for (const c of extraCats) {
+          cats.add(c);
+        }
+        spec.browser.trace.categories = [...cats];
+        // Preserve user's explicit choice (writeLogs defaults to true when
+        // user set --trace; we leave it untouched here).
       }
     }
   }
@@ -216,6 +253,17 @@ export async function urlFromLocalPath(
 
 /**
  * Parse auto sample condition strings.
+ *
+ * Recognised suffixes:
+ *  - `%`     relative difference (works for any unit)
+ *  - `ms`    absolute time in milliseconds
+ *  - `B`     absolute memory in bytes
+ *  - `KiB`   absolute memory in kibibytes (1024 bytes)
+ *  - `MiB`   absolute memory in mebibytes (1024*1024 bytes)
+ *
+ * Byte-valued conditions are normalised to bytes internally and compared
+ * against memory results; millisecond conditions are compared against timing
+ * results. The runner picks the appropriate set per-result based on its unit.
  */
 export function parseAutoSampleConditions(
   strs: string[]
@@ -223,19 +271,27 @@ export function parseAutoSampleConditions(
   const absolute = new Set<number>();
   const relative = new Set<number>();
   for (const str of strs) {
-    if (!str.match(/^[-+]?(\d*\.)?\d+(ms|%)$/)) {
+    const match = str.match(/^([-+]?(?:\d*\.)?\d+)(ms|%|B|KiB|MiB)$/);
+    if (!match) {
       throw new Error(`Invalid auto sample condition ${str}`);
     }
+    const numericPart = match[1];
+    const unit = match[2];
 
-    let num;
-    let absOrRel;
-    const isPercent = str.endsWith('%');
-    if (isPercent === true) {
-      num = Number(str.slice(0, -1)) / 100;
+    let num: number;
+    let absOrRel: Set<number>;
+    if (unit === '%') {
+      num = Number(numericPart) / 100;
       absOrRel = relative;
+    } else if (unit === 'ms') {
+      num = Number(numericPart);
+      absOrRel = absolute;
     } else {
-      // Otherwise ends with "ms".
-      num = Number(str.slice(0, -2)); // Note that Number("+1") === 1
+      // Byte units.
+      const raw = Number(numericPart);
+      const multiplier =
+        unit === 'B' ? 1 : unit === 'KiB' ? 1024 : 1024 * 1024;
+      num = raw * multiplier;
       absOrRel = absolute;
     }
 

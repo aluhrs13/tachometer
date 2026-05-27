@@ -354,4 +354,23 @@ suite('parseAutoSampleConditions', function () {
   test('throws on ambiguous unit', () => {
     assert.throws(() => parseAutoSampleConditions(['4']));
   });
+
+  test('byte units: B, KiB, MiB', () => {
+    assert.deepEqual(parseAutoSampleConditions(['0B']), {
+      absolute: [0],
+      relative: [],
+    });
+    assert.deepEqual(parseAutoSampleConditions(['+10KiB']), {
+      absolute: [10 * 1024],
+      relative: [],
+    });
+    assert.deepEqual(parseAutoSampleConditions(['1MiB']), {
+      absolute: [-1024 * 1024, 1024 * 1024],
+      relative: [],
+    });
+    assert.deepEqual(parseAutoSampleConditions(['-1KiB', '+1KiB', '1%']), {
+      absolute: [-1024, 1024],
+      relative: [-0.01, 0.01],
+    });
+  });
 });

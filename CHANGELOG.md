@@ -7,6 +7,17 @@ project adheres to [Semantic Versioning](http://semver.org/).
 
 <!-- ## Unreleased -->
 
+## Unreleased
+
+- Added memory measurement support via Chromium's `memory-infra` tracing.
+  Declare `--measure=memory` (or `{ "mode": "memory", "metric": "..." }` in a
+  config file) to capture a memory dump at the end of each benchmark sample
+  and compare results across variants using the same statistical pipeline as
+  timing benchmarks. Configurable via `--memory-metric`, `--memory-process`,
+  `--memory-dump-level`, and `--memory-gc-before-dump`. Chromium-only
+  (`chrome`/`edge`). Memory results are rendered in `B`/`KiB`/`MiB`/`GiB`
+  units and auto-sample conditions now accept `B`/`KiB`/`MiB` suffixes.
+
 ## [0.7.2] 2025-07-02
 
 - The auto-sample progress indicator is now logged to stderr instead of stdout,

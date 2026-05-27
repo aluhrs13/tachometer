@@ -9,7 +9,7 @@ import * as systeminformation from 'systeminformation';
 import {BrowserConfig} from './browser.js';
 import {measurementName} from './measure.js';
 import {ResultStatsWithDifferences} from './stats.js';
-import {BenchmarkResult, Measurement} from './types.js';
+import {BenchmarkResult, Measurement, Unit} from './types.js';
 
 export interface JsonOutputFile {
   benchmarks: Benchmark[];
@@ -28,6 +28,11 @@ interface Benchmark {
   mean: ConfidenceInterval;
   differences: Array<Difference | null>;
   samples: number[];
+  /**
+   * The unit the {@link samples} and {@link mean} values are expressed in.
+   * Defaults to `'ms'` when omitted for backward compatibility.
+   */
+  unit?: Unit;
 }
 
 interface Difference {
@@ -80,6 +85,11 @@ export function jsonOutput(
       },
       differences,
       samples: result.result.millis,
+      // Only emit unit when not the default 'ms' to maintain backward
+      // compatibility with existing JSON consumers.
+      ...(result.result.unit && result.result.unit !== 'ms'
+        ? {unit: result.result.unit}
+        : {}),
     });
   }
   return {benchmarks};

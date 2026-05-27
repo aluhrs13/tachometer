@@ -74,7 +74,8 @@ export interface NpmPackageJson {
 export type Measurement =
   | CallbackMeasurement
   | PerformanceEntryMeasurement
-  | ExpressionMeasurement;
+  | ExpressionMeasurement
+  | MemoryMeasurement;
 
 export interface MeasurementBase {
   name?: string;
@@ -94,9 +95,61 @@ export interface ExpressionMeasurement extends MeasurementBase {
   expression: string;
 }
 
-export type CommandLineMeasurements = 'callback' | 'fcp' | 'global';
+/**
+ * Capture a memory value via Chromium's memory-infra tracing.
+ *
+ * `metric` is a dotted path describing where in the per-process memory dump
+ * the value lives. The portion before the final `.` is an allocator path
+ * (e.g. `v8/main/heap`, `malloc`, `partition_alloc/allocated_objects`,
+ * `process_totals`) and the portion after the final `.` is the attribute name
+ * on that allocator (typically `size` or `effective_size`, or for
+ * `process_totals` something like `resident_set_bytes`).
+ */
+export interface MemoryMeasurement extends MeasurementBase {
+  mode: 'memory';
+  /**
+   * Allocator path + attribute, e.g. `v8/main/heap.size`.
+   */
+  metric: string;
+  /**
+   * Which process the measurement should be read from.
+   * - `renderer`: the page's renderer process (default)
+   * - `browser`: the main browser process
+   * - `gpu`: the GPU process
+   * - `all`: sum across all processes that report this metric
+   */
+  process?: 'renderer' | 'browser' | 'gpu' | 'all';
+  /**
+   * Level of detail to request in the memory dump. Defaults to `detailed`.
+   */
+  dumpLevel?: 'light' | 'detailed';
+  /**
+   * Whether to force a garbage collection before capturing the dump. Defaults
+   * to `true` to stabilize numbers.
+   */
+  gcBefore?: boolean;
+}
 
-export const measurements = new Set<string>(['callback', 'fcp', 'global']);
+export type CommandLineMeasurements = 'callback' | 'fcp' | 'global' | 'memory';
+
+export const measurements = new Set<string>([
+  'callback',
+  'fcp',
+  'global',
+  'memory',
+]);
+
+/**
+ * The unit a sample value is expressed in.
+ */
+export type Unit = 'ms' | 'bytes';
+
+/**
+ * Derive the natural unit for a given measurement.
+ */
+export function unitForMeasurement(measurement: Measurement): Unit {
+  return measurement.mode === 'memory' ? 'bytes' : 'ms';
+}
 
 /** A specification of a benchmark to run. */
 export interface BenchmarkSpec {
@@ -144,8 +197,17 @@ export interface BenchmarkResult {
   measurementIndex: number;
   /**
    * Millisecond measurements for each sample.
+   *
+   * NOTE: despite the name, when {@link unit} is `'bytes'` this array holds
+   * byte values. The name is kept for backward compatibility.
    */
   millis: number[];
+  /**
+   * The unit the {@link millis} values are expressed in. Derived from
+   * {@link measurement.mode}: `'bytes'` for memory measurements, `'ms'`
+   * otherwise.
+   */
+  unit: Unit;
   queryString: string;
   version: string;
   browser: BrowserConfig;

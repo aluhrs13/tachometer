@@ -513,6 +513,7 @@ suite('config', () => {
               trace: {
                 categories: defaults.traceCategories,
                 logDir: path.join(defaults.traceLogDir, 'example.comfoo=bar'),
+                writeLogs: true,
               },
             },
           },
@@ -538,6 +539,7 @@ suite('config', () => {
               trace: {
                 categories: defaults.traceCategories,
                 logDir: path.join(defaults.traceLogDir, 'example.comtest=1'),
+                writeLogs: true,
               },
             },
           },
@@ -600,6 +602,7 @@ suite('config', () => {
               trace: {
                 categories: ['test'],
                 logDir: path.join(process.cwd(), 'test', 'version1'),
+                writeLogs: true,
               },
             },
           },
@@ -626,6 +629,7 @@ suite('config', () => {
               trace: {
                 categories: ['test'],
                 logDir: path.join(process.cwd(), 'test', 'version2'),
+                writeLogs: true,
               },
             },
           },

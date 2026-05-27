@@ -135,6 +135,9 @@
                             "$ref": "#/definitions/ExpressionMeasurement"
                         },
                         {
+                            "$ref": "#/definitions/MemoryMeasurement"
+                        },
+                        {
                             "items": {
                                 "anyOf": [
                                     {
@@ -145,6 +148,9 @@
                                     },
                                     {
                                         "$ref": "#/definitions/ExpressionMeasurement"
+                                    },
+                                    {
+                                        "$ref": "#/definitions/MemoryMeasurement"
                                     }
                                 ],
                                 "description": "The kinds of intervals we can measure."
@@ -155,7 +161,8 @@
                             "enum": [
                                 "callback",
                                 "fcp",
-                                "global"
+                                "global",
+                                "memory"
                             ],
                             "type": "string"
                         }
@@ -367,6 +374,52 @@
             },
             "required": [
                 "name"
+            ],
+            "type": "object"
+        },
+        "MemoryMeasurement": {
+            "additionalProperties": false,
+            "description": "Capture a memory value via Chromium's memory-infra tracing.\n\n`metric` is a dotted path describing where in the per-process memory dump\nthe value lives. The portion before the final `.` is an allocator path\n(e.g. `v8/main/heap`, `malloc`, `partition_alloc/allocated_objects`,\n`process_totals`) and the portion after the final `.` is the attribute name\non that allocator (typically `size` or `effective_size`, or for\n`process_totals` something like `resident_set_bytes`).",
+            "properties": {
+                "dumpLevel": {
+                    "description": "Level of detail to request in the memory dump. Defaults to `detailed`.",
+                    "enum": [
+                        "detailed",
+                        "light"
+                    ],
+                    "type": "string"
+                },
+                "gcBefore": {
+                    "description": "Whether to force a garbage collection before capturing the dump. Defaults\nto `true` to stabilize numbers.",
+                    "type": "boolean"
+                },
+                "metric": {
+                    "description": "Allocator path + attribute, e.g. `v8/main/heap.size`.",
+                    "type": "string"
+                },
+                "mode": {
+                    "enum": [
+                        "memory"
+                    ],
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "process": {
+                    "description": "Which process the measurement should be read from.\n- `renderer`: the page's renderer process (default)\n- `browser`: the main browser process\n- `gpu`: the GPU process\n- `all`: sum across all processes that report this metric",
+                    "enum": [
+                        "all",
+                        "browser",
+                        "gpu",
+                        "renderer"
+                    ],
+                    "type": "string"
+                }
+            },
+            "required": [
+                "metric",
+                "mode"
             ],
             "type": "object"
         },

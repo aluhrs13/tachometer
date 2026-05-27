@@ -85,6 +85,15 @@ export interface TraceConfig {
    * The directory to log performance traces to
    */
   logDir: string;
+
+  /**
+   * Whether to write trace JSON files to {@link logDir} after each sample.
+   * Defaults to true when set via the user-facing `--trace` flag. Set to
+   * `false` when tracing is enabled implicitly (e.g. only because a memory
+   * measurement is in use) so that we don't litter the working directory with
+   * trace artifacts the user didn't ask for.
+   */
+  writeLogs?: boolean;
 }
 
 export interface WindowSize {

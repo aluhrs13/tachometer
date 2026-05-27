@@ -209,4 +209,25 @@ suite('format', () => {
     `;
     assert.equal(actual, expected.trim() + '\n');
   });
+
+  test('memory measurement renders in bytes', async () => {
+    const config: ConfigFile = {
+      benchmarks: [
+        {
+          name: 'foo',
+          url: 'mybench/index.html',
+          measurement: [{mode: 'memory', metric: 'malloc.size'}],
+        },
+        {
+          name: 'bar',
+          url: 'mybench/index.html',
+          measurement: [{mode: 'memory', metric: 'malloc.size'}],
+        },
+      ],
+    };
+    // fakeResults synthesises samples around (i+1)*10. For memory results,
+    // those values are interpreted as bytes, so we should see "B" units.
+    const actual = await fakeResultTable(config);
+    assert.include(actual, ' B');
+  });
 });

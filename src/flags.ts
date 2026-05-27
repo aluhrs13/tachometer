@@ -155,7 +155,8 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
       'Which time interval to measure. Options:\n' +
       '* callback: call bench.start() and bench.stop() (default)\n' +
       '*   global: set window.tachometerResult = <milliseconds>\n' +
-      '*      fcp: first contentful paint',
+      '*      fcp: first contentful paint\n' +
+      '*   memory: Chromium memory-infra memory dump',
     type: (str: string): string => {
       if (!measurements.has(str)) {
         throw new Error(
@@ -235,6 +236,38 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
     type: String,
     defaultValue: defaults.traceCategories.join(','),
   },
+  {
+    name: 'memory-metric',
+    description:
+      'Dotted memory-infra path to extract from the dump ' +
+      `(default ${defaults.memoryDefaultMetric}). ` +
+      'Only valid when --measure=memory.',
+    type: String,
+  },
+  {
+    name: 'memory-process',
+    description:
+      'Which Chromium process to read the memory metric from ' +
+      `(renderer|browser|gpu|all, default ${defaults.memoryDefaultProcess}). ` +
+      'Only valid when --measure=memory.',
+    type: String,
+  },
+  {
+    name: 'memory-dump-level',
+    description:
+      `Memory dump level of detail (light|detailed, default ${defaults.memoryDefaultDumpLevel}). ` +
+      'Only valid when --measure=memory.',
+    type: String,
+  },
+  {
+    name: 'memory-gc-before-dump',
+    description:
+      'Whether to force a garbage collection before capturing the memory ' +
+      `dump (default ${defaults.memoryDefaultGcBefore}). ` +
+      'Only valid when --measure=memory.',
+    type: booleanString('memory-gc-before-dump'),
+    typeLabel: 'true|false',
+  },
 ];
 
 export interface Opts {
@@ -266,6 +299,10 @@ export interface Opts {
   trace: boolean;
   'trace-log-dir': string;
   'trace-cat': string;
+  'memory-metric': string | undefined;
+  'memory-process': string | undefined;
+  'memory-dump-level': string | undefined;
+  'memory-gc-before-dump': boolean | undefined;
 
   // Extra arguments not associated with a flag are put here. These are our
   // benchmark names/URLs.
@@ -313,6 +350,9 @@ export function parseFlags(argv: string[]): Opts {
   // those cases up after parsing.
   if (opts['resolve-bare-modules'] === null) {
     opts['resolve-bare-modules'] = true;
+  }
+  if (opts['memory-gc-before-dump'] === null) {
+    opts['memory-gc-before-dump'] = true;
   }
   if (opts['horizon']) {
     if (opts['auto-sample-conditions']) {

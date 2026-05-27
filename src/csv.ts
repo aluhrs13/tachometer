@@ -16,13 +16,17 @@ const precision = 5;
 export function formatCsvStats(results: ResultStatsWithDifferences[]): string {
   // Note the examples in ./test/csv_test.ts should make this easier to
   // understand.
+  // Use the unit of the first result for the column header. If results have
+  // mixed units (e.g. ms and bytes), values are still emitted unchanged with
+  // their natural unit.
+  const unit = (results[0]?.result.unit ?? 'ms') as 'ms' | 'bytes';
   const h1 = ['', '', ''];
-  const h2 = ['', 'ms', ''];
+  const h2 = ['', unit, ''];
   const h3 = ['', 'min', 'max'];
   const rows = [];
   for (const result of results) {
     h1.push(`vs ${result.result.name}`, '', '', '');
-    h2.push('% change', '', 'ms change', '');
+    h2.push('% change', '', `${result.result.unit ?? 'ms'} change`, '');
     h3.push('min', 'max', 'min', 'max');
     const row = [];
     row.push(

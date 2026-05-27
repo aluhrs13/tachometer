@@ -202,8 +202,9 @@ likely that the condition will never be met, and the timeout will expire.
 
 ## Measurement modes
 
-Tachometer supports four modes of time interval measurements, controlled with
-the `measurement` config file property, or the `--measure` flag.
+Tachometer supports five modes of measurement (four for time, one for memory),
+controlled with the `measurement` config file property, or the `--measure`
+flag.
 
 If `measurement` is an array, then all of the given measurements will be
 retrieved from each page load. Each measurement from a page is treated as its
@@ -295,6 +296,61 @@ renders any DOM content. Currently, only Chrome supports the
 [`first-contentful-paint`](https://www.w3.org/TR/paint-timing/#first-contentful-paint)
 performance timeline entry. In this mode, calling the `start()` and `stop()`
 functions is not required, and has no effect.
+
+#### Memory (Chromium memory-infra)
+
+When the `--measure` flag is set to **`memory`**, or when a config-file
+measurement object has `"mode": "memory"`, tachometer captures a memory dump
+from Chromium's [memory-infra](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/memory-infra/README.md)
+tracing subsystem at the end of each sample and extracts a specific value out
+of it. Memory results are statistically compared between variants in exactly
+the same way as timing results.
+
+Memory measurement is **Chromium-only** (`chrome`, `edge`); using it with
+Firefox/Safari/IE will produce a clear error at startup.
+
+Configuration:
+
+```json
+"benchmarks": [
+  {
+    "measurement": {
+      "mode": "memory",
+      "metric": "v8/main/heap.size",
+      "process": "renderer",
+      "dumpLevel": "detailed",
+      "gcBefore": true
+    }
+  }
+]
+```
+
+- `metric` — dotted memory-infra path of the form `<allocator>.<attr>`. Common
+  examples: `v8/main/heap.size`, `malloc.size`,
+  `partition_alloc/allocated_objects.size`, `blink_gc.size`,
+  `process_totals.resident_set_bytes`. If the supplied path is not present in
+  the dump, tachometer raises an error listing the top-level allocators that
+  _were_ present, which makes discovery easy.
+- `process` — `renderer` (default), `browser`, `gpu`, or `all` (sum across all
+  processes that report this metric).
+- `dumpLevel` — `light` or `detailed` (default).
+- `gcBefore` — when `true` (default), force a garbage collection via the
+  DevTools `HeapProfiler.collectGarbage` command before capturing the dump.
+  This significantly reduces noise on V8 heap measurements.
+
+Equivalent CLI flags: `--measure=memory`, `--memory-metric=<path>`,
+`--memory-process=<role>`, `--memory-dump-level=<light|detailed>`, and
+`--memory-gc-before-dump=<true|false>`.
+
+Memory results are rendered with units of `B`/`KiB`/`MiB`/`GiB` (depending on
+magnitude) instead of `ms`. The auto-sample condition syntax accepts byte
+suffixes too — e.g. `--auto-sample-conditions=0KiB,+10KiB,-1%` will stop
+sampling once the absolute byte difference is well-resolved at the 10 KiB
+boundary _or_ once the relative difference is resolved at 1 %.
+
+A single benchmark can combine timing and memory measurements by passing an
+array to `measurement` — both are collected from the same page load, and
+each is statistically compared independently.
 
 ## Interpreting results
 
@@ -860,8 +916,12 @@ tach http://example.com
 | `--sample-size` / `-n`      | `50`                                    | Minimum number of times to run each benchmark ([details](#minimum-sample-size))                                                                                    |
 | `--auto-sample-conditions`  | `0%`                                    | The degrees of difference to try and resolve when auto-sampling ("N%" or "Nms", comma-delimited) ([details](#auto-sample-conditions))                              |
 | `--timeout`                 | `3`                                     | The maximum number of minutes to spend auto-sampling ([details](#auto-sample))                                                                                     |
-| `--measure`                 | `callback`                              | Which time interval to measure (`callback`, `global`, `fcp`) ([details](#measurement-modes))                                                                       |
+| `--measure`                 | `callback`                              | Which measurement to take (`callback`, `global`, `fcp`, `memory`) ([details](#measurement-modes))                                                                  |
 | `--measurement-expression`  | `window.tachometerResult`               | JS expression to poll for on page to retrieve measurement result when `measure` setting is set to `global`                                                         |
+| `--memory-metric`           | `v8/main/heap.size`                     | When `--measure=memory`, dotted memory-infra path to extract from the dump.                                                                                        |
+| `--memory-process`          | `renderer`                              | When `--measure=memory`, which Chromium process to read from (`renderer`, `browser`, `gpu`, `all`).                                                                |
+| `--memory-dump-level`       | `detailed`                              | When `--measure=memory`, dump level of detail (`light` or `detailed`).                                                                                             |
+| `--memory-gc-before-dump`   | `true`                                  | When `--measure=memory`, whether to force a garbage collection before the dump.                                                                                    |
 | `--remote-accessible-host`  | matches `--host`                        | When using a browser over a remote WebDriver connection, the URL that those browsers should use to access the local tachometer server ([details](#remote-control)) |
 | `--npm-install-dir`         | system temp dir                         | Where to install custom package versions. ([details](#swap-npm-dependencies))                                                                                      |
 | `--force-clean-npm-install` | `false`                                 | Always do a from-scratch NPM install when using custom package versions. ([details](#swap-npm-dependencies))                                                       |

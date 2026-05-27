@@ -155,6 +155,7 @@ type ConfigFileMeasurement =
   | 'callback'
   | 'fcp'
   | 'global'
+  | 'memory'
   | Measurement
   | Array<Measurement>;
 
@@ -459,6 +460,16 @@ async function parseBenchmark(
           benchmark.measurementExpression || defaults.measurementExpression,
       },
     ];
+  } else if (benchmark.measurement === 'memory') {
+    spec.measurement = [
+      {
+        mode: 'memory',
+        metric: defaults.memoryDefaultMetric,
+        process: defaults.memoryDefaultProcess,
+        dumpLevel: defaults.memoryDefaultDumpLevel,
+        gcBefore: defaults.memoryDefaultGcBefore,
+      },
+    ];
   } else if (Array.isArray(benchmark.measurement)) {
     spec.measurement = benchmark.measurement;
   } else if (benchmark.measurement !== undefined) {
@@ -536,6 +547,7 @@ function parseBrowserObject(config: BrowserConfigs): BrowserConfig {
       parsed.trace = {
         categories: defaults.traceCategories,
         logDir: defaults.traceLogDir,
+        writeLogs: true,
       };
     } else if (typeof config.trace === 'object') {
       parsed.trace = {
@@ -546,6 +558,7 @@ function parseBrowserObject(config: BrowserConfigs): BrowserConfig {
             : path.isAbsolute(config.trace.logDir)
             ? config.trace.logDir
             : path.join(process.cwd(), config.trace.logDir),
+        writeLogs: true,
       };
     }
   }

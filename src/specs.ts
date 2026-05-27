@@ -20,6 +20,7 @@ import {
   BenchmarkSpec,
   LocalUrl,
   Measurement,
+  MemoryMeasurement,
   PackageVersion,
   RemoteUrl,
 } from './types.js';
@@ -60,6 +61,7 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
       logDir: path.isAbsolute(rawLogDir)
         ? rawLogDir
         : path.join(process.cwd(), rawLogDir),
+      writeLogs: true,
     };
   }
 
@@ -108,6 +110,19 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
       mode: 'expression',
       expression:
         opts['measurement-expression'] || defaults.measurementExpression,
+    };
+  } else if (opts.measure === 'memory') {
+    measurement = {
+      mode: 'memory',
+      metric: opts['memory-metric'] || defaults.memoryDefaultMetric,
+      process: (opts['memory-process'] ||
+        defaults.memoryDefaultProcess) as MemoryMeasurement['process'],
+      dumpLevel: (opts['memory-dump-level'] ||
+        defaults.memoryDefaultDumpLevel) as MemoryMeasurement['dumpLevel'],
+      gcBefore:
+        opts['memory-gc-before-dump'] !== undefined
+          ? opts['memory-gc-before-dump']
+          : defaults.memoryDefaultGcBefore,
     };
   } else if (opts.measure !== undefined) {
     throwUnreachable(
