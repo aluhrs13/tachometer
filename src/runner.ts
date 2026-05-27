@@ -17,6 +17,7 @@ import {
   openAndSwitchToNewTab,
 } from './browser.js';
 import {measure, measurementName} from './measure.js';
+import type {MemoryDumpCache} from './measure.js';
 import {BenchmarkResult, BenchmarkSpec, unitForMeasurement} from './types.js';
 import {formatCsvStats, formatCsvRaw} from './csv.js';
 import {
@@ -288,6 +289,10 @@ export class Runner {
     // these to `capturePerfTraces` so they survive when `--trace` and
     // `--measure=memory` are used together.
     let consumedPerfLog: webdriver.logging.Entry[] = [];
+    // Shared between all memory measurements in this attempt so that one
+    // Tracing.requestMemoryDump is issued per sample even if the spec asks
+    // for multiple memory metrics (one dump contains every allocator).
+    let memoryDumpCache: MemoryDumpCache = {};
 
     // We'll try N attempts per page. Within each attempt, we'll try to collect
     // all of the measurements by polling. If we hit our per-attempt timeout
@@ -299,6 +304,7 @@ export class Runner {
       pendingMeasurements = new Set(spec.measurement);
       measurementResults = [];
       consumedPerfLog = [];
+      memoryDumpCache = {};
       await openAndSwitchToNewTab(driver, spec.browser);
       await driver.get(url);
       for (
@@ -322,7 +328,8 @@ export class Runner {
             driver,
             measurement,
             server,
-            consumedPerfLog
+            consumedPerfLog,
+            memoryDumpCache
           );
           if (result !== undefined) {
             measurementResults[measurementIndex] = result;

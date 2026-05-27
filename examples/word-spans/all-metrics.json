@@ -1,0 +1,78 @@
+{
+  "$schema": "../../config.schema.json",
+  "sampleSize": 10,
+  "timeout": 3,
+  "autoSampleConditions": ["5%", "+1MiB"],
+  "benchmarks": [
+    {
+      "name": "plain",
+      "url": "plain.html",
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      },
+      "measurement": [
+        {
+          "mode": "expression",
+          "name": "build-time",
+          "expression": "window.tachometerResult"
+        },
+        {
+          "mode": "memory",
+          "name": "v8-heap",
+          "metric": "v8/main/heap.size"
+        },
+        {
+          "mode": "memory",
+          "name": "blink-gc",
+          "metric": "blink_gc.size"
+        },
+        {
+          "mode": "memory",
+          "name": "partition-alloc",
+          "metric": "partition_alloc/allocated_objects.size"
+        },
+        {
+          "mode": "memory",
+          "name": "malloc",
+          "metric": "malloc.size"
+        }
+      ]
+    },
+    {
+      "name": "wrapped",
+      "url": "wrapped.html",
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      },
+      "measurement": [
+        {
+          "mode": "expression",
+          "name": "build-time",
+          "expression": "window.tachometerResult"
+        },
+        {
+          "mode": "memory",
+          "name": "v8-heap",
+          "metric": "v8/main/heap.size"
+        },
+        {
+          "mode": "memory",
+          "name": "blink-gc",
+          "metric": "blink_gc.size"
+        },
+        {
+          "mode": "memory",
+          "name": "partition-alloc",
+          "metric": "partition_alloc/allocated_objects.size"
+        },
+        {
+          "mode": "memory",
+          "name": "malloc",
+          "metric": "malloc.size"
+        }
+      ]
+    }
+  ]
+}

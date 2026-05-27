@@ -318,6 +318,63 @@ suite('measure', () => {
       assert.equal(consumedPerfLog.length, 2);
     });
 
+    test('memoryDumpCache shares one dump across multiple metrics', async () => {
+      // Count how many times Tracing.requestMemoryDump is dispatched. With
+      // a shared cache, two queryForMemory calls (one for v8, one for
+      // malloc) should only fire ONE dump request and read both metrics
+      // out of the same captured events.
+      let dumpRequests = 0;
+      const chunks: Array<Array<{message: string}>> = [
+        [],
+        [
+          logEntry(processNameEvent(1, 'Renderer')),
+          logEntry(
+            memDump(1, 'g', {
+              malloc: {size: 'a'},
+              'v8/main/heap': {size: 'b'},
+            })
+          ),
+        ],
+        [],
+      ];
+      let chunkIndex = 0;
+      const driver = {
+        sendDevToolsCommand: async (cmd: string) => {
+          if (cmd === 'Tracing.requestMemoryDump') {
+            dumpRequests++;
+            return {dumpGuid: 'g', success: true};
+          }
+          return undefined;
+        },
+        manage() {
+          return {
+            logs() {
+              return {
+                get: async () => {
+                  if (chunkIndex >= chunks.length) return [];
+                  return chunks[chunkIndex++];
+                },
+              };
+            },
+          };
+        },
+      };
+      const cache = {};
+      const v1 = await queryForMemory(
+        driver as unknown as Parameters<typeof queryForMemory>[0],
+        {mode: 'memory', metric: 'malloc.size', gcBefore: false},
+        {memoryDumpCache: cache, timeoutMs: 2000}
+      );
+      const v2 = await queryForMemory(
+        driver as unknown as Parameters<typeof queryForMemory>[0],
+        {mode: 'memory', metric: 'v8/main/heap.size', gcBefore: false},
+        {memoryDumpCache: cache, timeoutMs: 2000}
+      );
+      assert.equal(v1, 0xa);
+      assert.equal(v2, 0xb);
+      assert.equal(dumpRequests, 1, 'should fire only one dump request');
+    });
+
     test('throws on non-Chromium driver', async () => {
       const driver = {
         manage() {

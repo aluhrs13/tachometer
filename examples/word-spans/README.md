@@ -52,6 +52,15 @@ references them.
 DOM-heavy comparisons use `blink_gc.size`; for pure-JS heap behaviour
 use `v8/main/heap.size`.
 
+### [`all-metrics.json`](./all-metrics.json) — every memory metric in one run
+
+`plain` vs `wrapped` (50k words), with five measurements per page:
+`build-time`, `v8/main/heap.size`, `blink_gc.size`,
+`partition_alloc/allocated_objects.size`, and `malloc.size`. Thanks to
+the per-attempt dump cache, all five memory measurements are extracted
+from a single `Tracing.requestMemoryDump` call per sample, so adding
+more memory metrics costs essentially nothing in wall-clock time.
+
 ## Run
 
 From the repository root:
@@ -59,6 +68,23 @@ From the repository root:
 ```sh
 node bin/tach.js --config examples/word-spans/tachometer.json
 node bin/tach.js --config examples/word-spans/scale.json
+node bin/tach.js --config examples/word-spans/all-metrics.json
+```
+
+Or all in one go (PowerShell):
+
+```powershell
+node bin/tach.js --config examples/word-spans/tachometer.json; `
+node bin/tach.js --config examples/word-spans/scale.json; `
+node bin/tach.js --config examples/word-spans/all-metrics.json
+```
+
+Or all in one go (bash/zsh):
+
+```sh
+node bin/tach.js --config examples/word-spans/tachometer.json \
+  && node bin/tach.js --config examples/word-spans/scale.json \
+  && node bin/tach.js --config examples/word-spans/all-metrics.json
 ```
 
 Requires Chrome to be installed locally. Memory measurement is

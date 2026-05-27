@@ -23,12 +23,18 @@ import {throwUnreachable} from './util.js';
  * channel log entries that this call consumed (currently only memory
  * measurements drain the performance log). This lets a caller that also wants
  * to write a `--trace` file see the entries that would otherwise be lost.
+ *
+ * `memoryDumpCache`, when supplied, is shared across calls so that multiple
+ * memory measurements on the same page only fire one
+ * `Tracing.requestMemoryDump` per sample (one dump contains every
+ * allocator's stats, so we extract each metric from the same events).
  */
 export async function measure(
   driver: webdriver.WebDriver,
   measurement: Measurement,
   server: Server | undefined,
-  consumedPerfLog?: webdriver.logging.Entry[]
+  consumedPerfLog?: webdriver.logging.Entry[],
+  memoryDumpCache?: MemoryDumpCache
 ): Promise<number | undefined> {
   switch (measurement.mode) {
     case 'callback':
@@ -41,7 +47,10 @@ export async function measure(
     case 'performance':
       return queryForPerformanceEntry(driver, measurement);
     case 'memory':
-      return queryForMemory(driver, measurement, {consumedPerfLog});
+      return queryForMemory(driver, measurement, {
+        consumedPerfLog,
+        memoryDumpCache,
+      });
   }
   throwUnreachable(
     measurement,
@@ -363,27 +372,45 @@ const MEMORY_DUMP_TIMEOUT_MS = 5000;
 const MEMORY_DUMP_POLL_INTERVAL_MS = 100;
 
 /**
- * Trigger a memory-infra dump via the Chrome DevTools Protocol and read the
- * requested metric out of it.
- *
- * Returns the value in bytes, or `undefined` when no dump matching the
- * requested GUID arrived within the internal timeout (callers may then retry
- * on a fresh page attempt). The function does its own bounded polling so the
- * runner's tight poll loop does not re-trigger memory dumps every few
- * milliseconds.
+ * A cache of one captured memory-infra dump. A single dump contains every
+ * allocator's stats for every process, so when a spec has multiple memory
+ * measurements (e.g. one for `v8/main/heap.size`, one for `blink_gc.size`)
+ * we only need to trigger one dump and then read each metric out of the
+ * same set of events. The runner allocates one of these per page attempt
+ * and threads it through to {@link queryForMemory} via {@link measure}.
  */
-export async function queryForMemory(
+export interface MemoryDumpCache {
+  /**
+   * All trace events observed while the dump was being collected. Includes
+   * the `ph: 'v'` / `ph: 'V'` memory dump events and any `ph: 'M'` process
+   * metadata events that arrived alongside them.
+   */
+  events?: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+  /**
+   * The dump GUID returned by `Tracing.requestMemoryDump`. Used to filter
+   * the trace events down to the dump we triggered.
+   */
+  dumpGuid?: string;
+}
+
+/**
+ * Trigger one memory-infra dump and return all observed trace events.
+ * Returns `undefined` if no dump events arrived within the timeout.
+ */
+async function captureMemoryDumpEvents(
   driver: webdriver.WebDriver,
   measurement: MemoryMeasurement,
   options: {
     consumedPerfLog?: webdriver.logging.Entry[];
-    /**
-     * Maximum time, in milliseconds, to wait for dump trace events to arrive
-     * after triggering the dump. Defaults to {@link MEMORY_DUMP_TIMEOUT_MS}.
-     */
     timeoutMs?: number;
-  } = {}
-): Promise<number | undefined> {
+  }
+): Promise<
+  | {
+      events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+      dumpGuid: string | undefined;
+    }
+  | undefined
+> {
   const driverWithCdp = driver as unknown as WebDriverWithSendDevToolsCommand;
   if (!driverWithCdp.sendDevToolsCommand) {
     throw new Error(
@@ -409,7 +436,7 @@ export async function queryForMemory(
 
   // Drain any pending performance log entries so the dump we're about to
   // request is easier to locate. These predate the dump, so we forward them
-  // to the accumulator too — they're still valid trace events.
+  // to the accumulator too  they're still valid trace events.
   await drainPerformanceLog(driver, consumedPerfLog);
 
   const dumpResult = (await driverWithCdp.sendDevToolsCommand(
@@ -426,10 +453,7 @@ export async function queryForMemory(
       : undefined;
 
   // Poll the performance log until we see dump events matching our GUID, or
-  // we hit the internal timeout. We do this here rather than relying on the
-  // runner's outer poll loop because each iteration of the outer loop would
-  // otherwise issue another `Tracing.requestMemoryDump`, which is expensive
-  // and pollutes the trace.
+  // we hit the internal timeout.
   const events: Array<MemoryDumpEvent | ProcessMetadataEvent> = [];
   const accumulateEvents = (entries: webdriver.logging.Entry[]) => {
     for (const entry of entries) {
@@ -467,7 +491,6 @@ export async function queryForMemory(
             (e as MemoryDumpEvent).dump_guid === dumpGuid)
       );
     } else {
-      // No GUID returned by CDP: fall back to "have we seen any dump event?".
       haveMatchingDump = events.some((e) => e.ph === 'v' || e.ph === 'V');
     }
     if (haveMatchingDump) {
@@ -478,6 +501,27 @@ export async function queryForMemory(
     }
   }
 
+  const hasAnyDump = events.some((e) => e.ph === 'v' || e.ph === 'V');
+  if (!hasAnyDump) {
+    return undefined;
+  }
+  return {events, dumpGuid};
+}
+
+/**
+ * Pure metric extraction from a captured memory dump. Throws on
+ * unrecoverable conditions (missing metric, wrong process when role
+ * metadata is known); returns `undefined` only when there are simply no
+ * matching dumps to read from.
+ */
+function extractMemoryMetric(
+  captured: {
+    events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+    dumpGuid: string | undefined;
+  },
+  measurement: MemoryMeasurement
+): number | undefined {
+  const {events, dumpGuid} = captured;
   const allDumps = events.filter(
     (e): e is MemoryDumpEvent => e.ph === 'v' || e.ph === 'V'
   );
@@ -502,9 +546,9 @@ export async function queryForMemory(
   );
 
   if (matchingDumps.length === 0) {
-    // No process-role metadata available (which is common when Chromium hasn't
-    // emitted process_name events yet). Fall back to all dumps so we still
-    // return a sensible value.
+    // No process-role metadata available (which is common when Chromium
+    // hasn't emitted process_name events yet). Fall back to all dumps so
+    // we still return a sensible value.
     if (desired === 'renderer' && roles.size === 0) {
       // Best effort: pick the dump that actually has the metric.
       const fallback = dumps.find(
@@ -547,6 +591,69 @@ export async function queryForMemory(
   return total;
 }
 
+/**
+ * Trigger a memory-infra dump via the Chrome DevTools Protocol and read the
+ * requested metric out of it.
+ *
+ * Returns the value in bytes, or `undefined` when no dump arrived within
+ * the internal timeout (callers may then retry on a fresh page attempt).
+ *
+ * When `options.memoryDumpCache` is supplied, a single dump is shared
+ * across all calls that use the same cache object. Only the first call
+ * triggers `Tracing.requestMemoryDump`; subsequent calls extract their
+ * metric from the cached events synchronously. The runner allocates one
+ * cache per page attempt so that multiple memory measurements on the same
+ * page only fire one dump per sample. Note that this also means the
+ * `gcBefore` and `dumpLevel` settings on the *first* memory measurement
+ * of the spec determine the dump's behaviour; settings on later
+ * measurements are ignored for cached dumps (a single dump only has one
+ * level of detail, and a single GC is semantically correct since all
+ * metrics are read from the same moment in time).
+ */
+export async function queryForMemory(
+  driver: webdriver.WebDriver,
+  measurement: MemoryMeasurement,
+  options: {
+    consumedPerfLog?: webdriver.logging.Entry[];
+    /**
+     * Maximum time, in milliseconds, to wait for dump trace events to
+     * arrive after triggering the dump. Defaults to
+     * {@link MEMORY_DUMP_TIMEOUT_MS}.
+     */
+    timeoutMs?: number;
+    /**
+     * If supplied, the captured dump events are cached on this object so
+     * subsequent calls with the same cache skip the dump request entirely
+     * and extract their metric from the cached events.
+     */
+    memoryDumpCache?: MemoryDumpCache;
+  } = {}
+): Promise<number | undefined> {
+  const cache = options.memoryDumpCache;
+
+  // If we already captured a dump for this attempt, just read the metric.
+  if (cache && cache.events !== undefined) {
+    return extractMemoryMetric(
+      {events: cache.events, dumpGuid: cache.dumpGuid},
+      measurement
+    );
+  }
+
+  const captured = await captureMemoryDumpEvents(driver, measurement, {
+    consumedPerfLog: options.consumedPerfLog,
+    timeoutMs: options.timeoutMs,
+  });
+  if (captured === undefined) {
+    return undefined;
+  }
+
+  if (cache) {
+    cache.events = captured.events;
+    cache.dumpGuid = captured.dumpGuid;
+  }
+
+  return extractMemoryMetric(captured, measurement);
+}
 // ----- end memory measurement -----------------------------------------------
 
 /**
