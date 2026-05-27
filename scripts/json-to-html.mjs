@@ -184,6 +184,51 @@ function diffCell(diff, rUnit) {
   </td>`;
 }
 
+// ---------- grouping ----------
+
+/**
+ * Extract the measurement-group label from a benchmark entry. tachometer
+ * names multi-measurement results as `pageName [measurementName]`; we use
+ * `measurement.name` if available (set by the user in the config), then
+ * fall back to the bracketed suffix, then to the measurement mode.
+ */
+function metricLabel(b) {
+  if (b.measurement && typeof b.measurement.name === 'string') {
+    return b.measurement.name;
+  }
+  const m = /\[(.+?)\]\s*$/.exec(b.name ?? '');
+  if (m) return m[1];
+  return b.measurement?.mode ?? 'value';
+}
+
+/**
+ * Extract the page label (everything before the bracketed measurement
+ * suffix). Falls back to the full name when there is no suffix.
+ */
+function pageLabel(b) {
+  const name = b.name ?? '';
+  const m = /^(.*?)\s*\[.+?\]\s*$/.exec(name);
+  return m ? m[1] : name;
+}
+
+/**
+ * Group benchmark entries by their metric label, preserving the original
+ * index of each entry so we can look up its `differences` row.
+ */
+function groupByMetric(benchmarks) {
+  const groups = new Map();
+  benchmarks.forEach((b, i) => {
+    const key = metricLabel(b);
+    let g = groups.get(key);
+    if (!g) {
+      g = {label: key, members: []};
+      groups.set(key, g);
+    }
+    g.members.push({benchmark: b, index: i});
+  });
+  return [...groups.values()];
+}
+
 // ---------- HTML ----------
 
 const generated = new Date();
@@ -321,6 +366,58 @@ const html = `<!DOCTYPE html>
   td.diff-slower { color: var(--slower); }
   td.diff-unsure { color: var(--unsure); }
   td.diff-empty { background: var(--surface); }
+  /* Per-metric comparison sections */
+  .metric-group {
+    margin-bottom: 28px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .metric-group header {
+    padding: 10px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .metric-group header h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .metric-group header .sub {
+    color: var(--dim);
+    font-size: 12px;
+  }
+  .metric-group table {
+    margin: 0;
+  }
+  .metric-group table thead th {
+    background: transparent;
+  }
+  /* In per-metric tables there are typically only 2-3 columns, so the
+     vertical column headers from the global .diff-matrix rule become
+     unnecessary — render them horizontally. */
+  .metric-group table.diff-matrix th.col {
+    writing-mode: horizontal-tb;
+    transform: none;
+    text-align: right;
+    max-height: none;
+  }
+  .metric-group .mean-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .metric-group .hint {
+    font-size: 10px;
+    margin-top: 2px;
+  }
+  .metric-group .single-note {
+    padding: 12px 14px;
+    color: var(--dim);
+    font-size: 12px;
+  }
   .footer {
     margin-top: 32px;
     font-size: 11px;
@@ -376,38 +473,79 @@ const html = `<!DOCTYPE html>
     </tbody>
   </table>
 
-  <h2>Differences (95% confidence intervals)</h2>
+  <h2>Differences by metric</h2>
   <p class="meta">
-    Each cell compares the row benchmark to the column benchmark. Cross-unit
-    pairs (e.g. milliseconds vs bytes) are intentionally left blank.
+    For each measurement name in the run, the table below compares every
+    page against every other page. Comparisons are only meaningful within
+    the same metric, so we group them here instead of showing the full
+    NxN matrix.
   </p>
-  <table class="diff-matrix">
-    <thead>
-      <tr>
-        <th></th>
-        ${benchmarks
-          .map((b) => `<th class="col">${escapeHtml(b.name)}</th>`)
-          .join('')}
-      </tr>
-    </thead>
-    <tbody>
-      ${benchmarks
-        .map((row, ri) => {
-          const rUnit = unitOf(row);
+  ${groupByMetric(benchmarks)
+    .map((group) => {
+      const unit = unitOf(group.members[0].benchmark);
+      if (group.members.length < 2) {
+        return `<section class="metric-group">
+          <header>
+            <h3>${escapeHtml(group.label)}</h3>
+            <span class="sub">unit: ${escapeHtml(unit)}</span>
+          </header>
+          <div class="single-note">Only one benchmark — nothing to compare.</div>
+        </section>`;
+      }
+      const headerCells = group.members
+        .map(
+          (m) => `<th class="col">${escapeHtml(pageLabel(m.benchmark))}</th>`
+        )
+        .join('');
+      const rows = group.members
+        .map((rowEntry) => {
+          const rUnit = unitOf(rowEntry.benchmark);
+          const cells = group.members
+            .map((colEntry) => {
+              if (rowEntry.index === colEntry.index) {
+                return '<td class="diff diff-empty"><span class="dim">·</span></td>';
+              }
+              const diff = rowEntry.benchmark.differences?.[colEntry.index];
+              return diffCell(diff, rUnit);
+            })
+            .join('');
+          const s = sampleStats(rowEntry.benchmark.samples);
+          const meanCell = `<div class="num">${fmtCi(
+            rowEntry.benchmark.mean,
+            rUnit
+          )}</div><div class="dim hint">n=${s.n}, σ=${fmt(
+            s.stddev,
+            rUnit
+          )}</div>`;
           return `<tr>
-            <th class="row">${escapeHtml(row.name)}</th>
-            ${benchmarks
-              .map((_, ci) =>
-                ri === ci
-                  ? '<td class="diff diff-empty"><span class="dim">·</span></td>'
-                  : diffCell(row.differences?.[ci], rUnit)
-              )
-              .join('')}
+            <th class="row">${escapeHtml(pageLabel(rowEntry.benchmark))}</th>
+            <td class="num mean-cell">${meanCell}</td>
+            ${cells}
           </tr>`;
         })
-        .join('\n')}
-    </tbody>
-  </table>
+        .join('\n');
+      return `<section class="metric-group">
+        <header>
+          <h3>${escapeHtml(group.label)}</h3>
+          <span class="sub">unit: ${escapeHtml(unit)} · ${
+        group.members.length
+      } pages</span>
+        </header>
+        <table class="diff-matrix">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="num">Mean (95% CI)</th>
+              ${headerCells}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </section>`;
+    })
+    .join('\n')}
 
   <p class="footer">
     Rendered by <code>scripts/json-to-html.mjs</code>.
