@@ -298,13 +298,16 @@ function valueFormatterFor(r: ResultStats): (n: number) => string {
 
 function formatDifference({absolute, relative}: Difference, r: ResultStats): string {
   const fmtAbs = valueFormatterFor(r);
+  const isBytes = (r.result.unit ?? 'ms') === 'bytes';
+  const worseWord = isBytes ? 'more' : 'slower';
+  const betterWord = isBytes ? 'less' : 'faster';
   let word, rel, abs;
   if (absolute.low > 0 && relative.low > 0) {
-    word = `[bold red]{slower}`;
+    word = `[bold red]{${worseWord}}`;
     rel = formatConfidenceInterval(relative, percent);
     abs = formatConfidenceInterval(absolute, fmtAbs);
   } else if (absolute.high < 0 && relative.high < 0) {
-    word = `[bold green]{faster}`;
+    word = `[bold green]{${betterWord}}`;
     rel = formatConfidenceInterval(negate(relative), percent);
     abs = formatConfidenceInterval(negate(absolute), fmtAbs);
   } else {

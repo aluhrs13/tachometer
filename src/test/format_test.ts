@@ -229,5 +229,11 @@ suite('format', () => {
     // those values are interpreted as bytes, so we should see "B" units.
     const actual = await fakeResultTable(config);
     assert.include(actual, ' B');
+    // Memory comparisons should describe the delta as "less" / "more" rather
+    // than the time-oriented "faster" / "slower".
+    assert.include(actual, 'less');
+    assert.include(actual, 'more');
+    assert.notInclude(actual, 'faster');
+    assert.notInclude(actual, 'slower');
   });
 });
