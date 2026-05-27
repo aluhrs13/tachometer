@@ -35,12 +35,12 @@ fired before the script ran, the two pages would look the same.
 
 Empirical results on Chrome 148 (sample size 25, headless):
 
-| Metric            | n=1,000 | n=200,000 | ratio |
-| ----------------- | ------- | --------- | ----- |
-| `build-time`      | 15 ms   | 322 ms    |  21×  |
-| `v8/main/heap`    | 1.17 MB | 2.66 MB   |  2.3× |
-| **`blink_gc`**    | **2.14 MB** | **120.15 MB** | **56×** |
-| `partition_alloc/allocated_objects` | 0.49 MB | 5.28 MB | 10.7× |
+| Metric                              | n=1,000     | n=200,000     | ratio   |
+| ----------------------------------- | ----------- | ------------- | ------- |
+| `build-time`                        | 15 ms       | 322 ms        | 21×     |
+| `v8/main/heap`                      | 1.17 MB     | 2.66 MB       | 2.3×    |
+| **`blink_gc`**                      | **2.14 MB** | **120.15 MB** | **56×** |
+| `partition_alloc/allocated_objects` | 0.49 MB     | 5.28 MB       | 10.7×   |
 
 The huge `blink_gc.size` delta confirms the dump captures the constructed
 DOM (Oilpan manages DOM nodes in modern Chromium). The relatively flat
@@ -89,3 +89,19 @@ node bin/tach.js --config examples/word-spans/tachometer.json \
 
 Requires Chrome to be installed locally. Memory measurement is
 Chromium-only (`chrome` or `edge`).
+
+## Pretty HTML report
+
+Pass `--json-file=...` to capture results, then render them with the
+included script:
+
+```sh
+node bin/tach.js --config examples/word-spans/all-metrics.json --json-file=results.json
+node scripts/json-to-html.mjs results.json
+# writes results.html next to results.json
+```
+
+The report includes a summary table (mean/CI, min/max, std dev, an
+inline histogram per result) and an NxN differences matrix. Memory
+results render in `B`/`KiB`/`MiB`/`GiB`; timing results in `ms`.
+Cross-unit pairs are left blank (consistent with the terminal output).
