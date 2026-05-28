@@ -5,6 +5,10 @@
         "CallbackMeasurement": {
             "additionalProperties": false,
             "properties": {
+                "compareKey": {
+                    "description": "Optional key used by the stats engine to group pairwise comparisons.\nWhen set, {@link computeDifferences} only computes a difference between\ntwo results whose `compareKey`s match. When unset (the default for all\nnon-memory measurements), the existing all-pairs comparison behavior is\npreserved. Resolved memory measurements set this to\n`memory:<processRole>:<allocator>.<attribute>` so each auto-discovered\ncategory is only compared against the same category in other variants.",
+                    "type": "string"
+                },
                 "mode": {
                     "enum": [
                         "callback"
@@ -153,7 +157,7 @@
                                         "$ref": "#/definitions/MemoryMeasurement"
                                     }
                                 ],
-                                "description": "The kinds of intervals we can measure."
+                                "description": "The kinds of intervals we can measure (public/config-facing)."
                             },
                             "type": "array"
                         },
@@ -233,6 +237,10 @@
         "ExpressionMeasurement": {
             "additionalProperties": false,
             "properties": {
+                "compareKey": {
+                    "description": "Optional key used by the stats engine to group pairwise comparisons.\nWhen set, {@link computeDifferences} only computes a difference between\ntwo results whose `compareKey`s match. When unset (the default for all\nnon-memory measurements), the existing all-pairs comparison behavior is\npreserved. Resolved memory measurements set this to\n`memory:<processRole>:<allocator>.<attribute>` so each auto-discovered\ncategory is only compared against the same category in other variants.",
+                    "type": "string"
+                },
                 "expression": {
                     "type": "string"
                 },
@@ -379,8 +387,12 @@
         },
         "MemoryMeasurement": {
             "additionalProperties": false,
-            "description": "Capture a memory value via Chromium's memory-infra tracing.\n\n`metric` is a dotted path describing where in the per-process memory dump\nthe value lives. The portion before the final `.` is an allocator path\n(e.g. `v8/main/heap`, `malloc`, `partition_alloc/allocated_objects`,\n`process_totals`) and the portion after the final `.` is the attribute name\non that allocator (typically `size` or `effective_size`, or for\n`process_totals` something like `resident_set_bytes`).",
+            "description": "Capture all memory values via Chromium's memory-infra tracing.\n\nThis is the user-facing (unresolved) form. Tachometer triggers one\n`Tracing.requestMemoryDump` per sample and auto-discovers every\n`(processRole, allocator, attribute)` tuple present in the dump. At\nwarmup time, each unresolved `MemoryMeasurement` is expanded into N\n{@link ResolvedMemoryMeasurement} entries (one per tuple discovered\nacross the union of probes from every spec).",
             "properties": {
+                "compareKey": {
+                    "description": "Optional key used by the stats engine to group pairwise comparisons.\nWhen set, {@link computeDifferences} only computes a difference between\ntwo results whose `compareKey`s match. When unset (the default for all\nnon-memory measurements), the existing all-pairs comparison behavior is\npreserved. Resolved memory measurements set this to\n`memory:<processRole>:<allocator>.<attribute>` so each auto-discovered\ncategory is only compared against the same category in other variants.",
+                    "type": "string"
+                },
                 "dumpLevel": {
                     "description": "Level of detail to request in the memory dump. Defaults to `detailed`.",
                     "enum": [
@@ -393,9 +405,9 @@
                     "description": "Whether to force a garbage collection before capturing the dump. Defaults\nto `true` to stabilize numbers.",
                     "type": "boolean"
                 },
-                "metric": {
-                    "description": "Allocator path + attribute, e.g. `v8/main/heap.size`.",
-                    "type": "string"
+                "maxAllocatorDepth": {
+                    "description": "Maximum allocator-path depth to enumerate, where depth is the number\nof `/`-separated segments in the allocator name (e.g. `malloc` has\ndepth 1, `malloc/partitions` has depth 2,\n`malloc/partitions/allocator/buckets/bucket_0000016` has depth 5).\nTuples whose allocator exceeds this depth are dropped at probe\ntime; Chromium memory-infra already reports parent allocators as\nthe sum of their children's `size`/`effective_size`/etc., so the\nroll-up still appears in the result table - just at the configured\ndepth instead of as a forest of per-bucket sub-rows.\n\nDefaults to `3`, which keeps every top-level subsystem\n(`malloc`, `blink_gc`, `v8`, `partition_alloc`, `cc`, ...) plus\nits top-level categories (`v8/main/heap`, `malloc/partitions`,\n`blink_objects/<TypeName>`, ...) while dropping the per-bucket and\nper-sub-arena breakdowns that account for ~65% of rows on a\ntypical `detailed` dump. Pass a very large number (e.g. `99`) to\neffectively disable the cap.",
+                    "type": "number"
                 },
                 "mode": {
                     "enum": [
@@ -405,20 +417,9 @@
                 },
                 "name": {
                     "type": "string"
-                },
-                "process": {
-                    "description": "Which process the measurement should be read from.\n- `renderer`: the page's renderer process (default)\n- `browser`: the main browser process\n- `gpu`: the GPU process\n- `all`: sum across all processes that report this metric",
-                    "enum": [
-                        "all",
-                        "browser",
-                        "gpu",
-                        "renderer"
-                    ],
-                    "type": "string"
                 }
             },
             "required": [
-                "metric",
                 "mode"
             ],
             "type": "object"
@@ -426,6 +427,10 @@
         "PerformanceEntryMeasurement": {
             "additionalProperties": false,
             "properties": {
+                "compareKey": {
+                    "description": "Optional key used by the stats engine to group pairwise comparisons.\nWhen set, {@link computeDifferences} only computes a difference between\ntwo results whose `compareKey`s match. When unset (the default for all\nnon-memory measurements), the existing all-pairs comparison behavior is\npreserved. Resolved memory measurements set this to\n`memory:<processRole>:<allocator>.<attribute>` so each auto-discovered\ncategory is only compared against the same category in other variants.",
+                    "type": "string"
+                },
                 "entryName": {
                     "type": "string"
                 },

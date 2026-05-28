@@ -302,9 +302,12 @@ functions is not required, and has no effect.
 When the `--measure` flag is set to **`memory`**, or when a config-file
 measurement object has `"mode": "memory"`, tachometer captures a memory dump
 from Chromium's [memory-infra](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/memory-infra/README.md)
-tracing subsystem at the end of each sample and extracts a specific value out
-of it. Memory results are statistically compared between variants in exactly
-the same way as timing results.
+tracing subsystem at the end of each sample and **auto-discovers every
+`(processRole, allocator, attribute)` tuple** present in the dump. Each
+tuple becomes its own measurement and is statistically compared between
+variants the same way timing results are. There are no per-metric or
+per-process knobs - tachometer just reports on every category Chromium
+emits.
 
 Memory measurement is **Chromium-only** (`chrome`, `edge`); using it with
 Firefox/Safari/IE will produce a clear error at startup.
@@ -316,8 +319,6 @@ Configuration:
   {
     "measurement": {
       "mode": "memory",
-      "metric": "v8/main/heap.size",
-      "process": "renderer",
       "dumpLevel": "detailed",
       "gcBefore": true
     }
@@ -325,22 +326,75 @@ Configuration:
 ]
 ```
 
-- `metric` — dotted memory-infra path of the form `<allocator>.<attr>`. Common
-  examples: `v8/main/heap.size`, `malloc.size`,
-  `partition_alloc/allocated_objects.size`, `blink_gc.size`,
-  `process_totals.resident_set_bytes`. If the supplied path is not present in
-  the dump, tachometer raises an error listing the top-level allocators that
-  _were_ present, which makes discovery easy.
-- `process` — `renderer` (default), `browser`, `gpu`, or `all` (sum across all
-  processes that report this metric).
 - `dumpLevel` — `light` or `detailed` (default).
 - `gcBefore` — when `true` (default), force a garbage collection via the
   DevTools `HeapProfiler.collectGarbage` command before capturing the dump.
   This significantly reduces noise on V8 heap measurements.
+- `maxAllocatorDepth` — when set, drops allocators whose `/`-separated
+  path depth exceeds the given value. `malloc` has depth 1,
+  `malloc/partitions` has depth 2,
+  `malloc/partitions/allocator/buckets/bucket_0000016` has depth 5.
+  Chromium memory-infra reports parent allocators as the sum of their
+  children's roll-up attributes (`size`, `effective_size`,
+  `allocated_size`, …), so dropping deeper paths preserves the
+  high-level picture while collapsing per-bucket and per-sub-arena
+  noise. A typical detailed dump produces 20,000+ rows; setting
+  `maxAllocatorDepth: 2` typically cuts that to a few hundred while
+  keeping every top-level category. Attributes that only exist at
+  leaves (e.g. per-bucket `fragmentation`) are skipped entirely when
+  this is set. Default: unlimited.
 
-Equivalent CLI flags: `--measure=memory`, `--memory-metric=<path>`,
-`--memory-process=<role>`, `--memory-dump-level=<light|detailed>`, and
-`--memory-gc-before-dump=<true|false>`.
+Equivalent CLI flags: `--measure=memory`,
+`--memory-dump-level=<light|detailed>`,
+`--memory-gc-before-dump=<true|false>`, and
+`--memory-max-allocator-depth=<N>`.
+
+**Attribute filtering.** Memory-infra emits dozens of attributes per
+allocator: bytes (`size`, `effective_size`, `allocated_size`, …),
+counters (`object_count`, `alloc_count`, …), pool bookkeeping
+(`regular_pool_usage`, `brp_pool_largest_reservation`, …), boolean
+flags (`is_peak_rss_resettable`, `is_prepaint`, …), and derived rates
+(`syscalls_per_minute`, `brp_quarantined_bytes_per_minute`, …).
+Tachometer tracks only the **bytes**-focused subset by default:
+
+- `size` — the primary "bytes allocated for this dump" metric every
+  named allocator reports.
+- `effective_size` — bytes attributed after sharing is split across
+  owners (the "fair share" view of memory).
+- `process_totals.peak_resident_set_size`,
+  `process_totals.private_footprint_bytes`,
+  `process_totals.resident_set_bytes` — process-level RSS-style
+  attributes on the platforms that report them.
+
+Everything else is dropped during enumeration. This is hard-coded
+because the dropped attributes don't answer a memory-cost question;
+they only add noise to the result table.
+
+**How auto-discovery works.** Before any recorded sample is taken,
+tachometer opens each benchmark page once, captures a probe dump, and
+enumerates every `(processRole, allocator, attribute)` tuple in it. The
+**union** of tuples across every variant becomes the result set used for
+the whole run, so two variants of the same benchmark always produce the
+same row set and can be compared directly. Once probing is done,
+tachometer takes its regular samples; each sample fires a single
+`Tracing.requestMemoryDump`, and every discovered tuple is read out of
+that one dump.
+
+**Result rows.** Each row is labelled
+`<bench> [memory:<processRole>:<allocator>.<attribute>]`. Process roles
+come straight from Chromium's `process_name` metadata, lowercased (e.g.
+`renderer`, `browser`, `gpu process`, `utility: network service`). When
+multiple processes share the same role (e.g. several renderers),
+tachometer sums their values for that tuple. A category that is present
+in one variant but missing in another is recorded as `0` for the missing
+variant, with one caveat: when the baseline value for a comparison is
+exactly `0`, the relative-percent column is rendered as `n/a` (division
+by zero is undefined); the absolute byte delta is still shown.
+
+**Comparison grouping.** Each auto-discovered category only compares
+against the **same** category across variants. There is no
+`renderer:malloc.size` vs `browser:v8/main/heap.size` cross-pair noise
+in the table.
 
 Memory results are rendered with units of `B`/`KiB`/`MiB`/`GiB` (depending on
 magnitude) instead of `ms`. The auto-sample condition syntax accepts byte
@@ -354,7 +408,65 @@ benchmark suites can share a single condition list safely.
 
 A single benchmark can combine timing and memory measurements by passing an
 array to `measurement` — both are collected from the same page load, and
-each is statistically compared independently.
+each is statistically compared independently. Only **one** `mode: "memory"`
+entry is allowed per benchmark (auto-discovery already covers every
+category, so duplicates would be redundant; tachometer fails at startup
+with a clear error if more than one is declared).
+
+#### Result rows are filtered by a curated rule list
+
+Memory-infra emits hundreds of `(processRole, allocator, attribute)`
+tuples per dump. The raw list is noisy and shifts between Chromium
+versions, which makes runs hard to compare. Tachometer ships with a
+**hard-coded** curated rule list that filters and aggregates the
+discovered tuples into a focused, stable set of result rows:
+
+- **Renderer bytes-level totals** for each top-level subsystem:
+  `renderer:blink_gc.size`/`.effective_size`,
+  `renderer:malloc.size`/`.effective_size`,
+  `renderer:v8.size`/`.effective_size`,
+  `renderer:partition_alloc.size`/`.effective_size`.
+- **Renderer OS-level RSS** when the platform reports it:
+  `renderer:process_totals.peak_resident_set_size`,
+  `renderer:process_totals.private_footprint_bytes`.
+- **Service processes** (NetworkService, StorageService,
+  TracingService, …) collapsed into one summed row each:
+  `memory:sum:all-services-malloc-size` and
+  `memory:sum:all-services-malloc-effective-size`.
+- **Browser process** malloc totals as a coarse indicator.
+
+This is intentionally **not user-configurable**. Every benchmark in
+every repo gets the same rows, so results are directly comparable
+without per-config bikeshedding. The full list is the
+`memoryDefaultCategories` constant in
+[`src/defaults.ts`](./src/defaults.ts) — if a category you care
+about is missing for a real benchmark, propose a change there.
+
+**Iterating on the rule list** is supported via the diagnostic JSON
+output: pass `--memory-categories-file=<path>.json` to write a
+report describing what the run actually did. The file has:
+
+- `config` — the focused-default filters that ran before the rule
+  list (`maxAllocatorDepth`, tracked attributes).
+- `discovered.tuples` — every `(processRole, allocator, attribute)`
+  tuple memory-infra emitted (after the focused-default filters).
+  Plus a `perSpec` count so you can see when one variant discovers
+  more than another.
+- `output.tupleRows` and `output.aggregateRows` — the rows that
+  made it into the result table. Each aggregate lists its
+  `sources` (the exact tuples that contributed to the sum).
+- `excludedByRule` — per-`exclude` pattern, the tuples it removed.
+- `droppedNoMatch` — tuples that were discovered but matched no
+  `include` rule. Skim this list to find rows worth proposing for
+  the baked-in `memoryDefaultCategories`.
+- `optionalRulesWithNoMatches` — `include` patterns flagged
+  `optional: true` that didn't match anything this run (some
+  rules in the baked list are conditional on platform / Chromium
+  version).
+
+The file is tiny (kilobytes) and written every time the flag is
+set; you can check one in next to a benchmark config and diff across
+runs to spot Chromium emission changes.
 
 ## Interpreting results
 
@@ -922,15 +1034,15 @@ tach http://example.com
 | `--timeout`                 | `3`                                     | The maximum number of minutes to spend auto-sampling ([details](#auto-sample))                                                                                     |
 | `--measure`                 | `callback`                              | Which measurement to take (`callback`, `global`, `fcp`, `memory`) ([details](#measurement-modes))                                                                  |
 | `--measurement-expression`  | `window.tachometerResult`               | JS expression to poll for on page to retrieve measurement result when `measure` setting is set to `global`                                                         |
-| `--memory-metric`           | `v8/main/heap.size`                     | When `--measure=memory`, dotted memory-infra path to extract from the dump.                                                                                        |
-| `--memory-process`          | `renderer`                              | When `--measure=memory`, which Chromium process to read from (`renderer`, `browser`, `gpu`, `all`).                                                                |
 | `--memory-dump-level`       | `detailed`                              | When `--measure=memory`, dump level of detail (`light` or `detailed`).                                                                                             |
 | `--memory-gc-before-dump`   | `true`                                  | When `--measure=memory`, whether to force a garbage collection before the dump.                                                                                    |
+| `--memory-max-allocator-depth` | _(unlimited)_                        | When `--measure=memory`, drop allocators whose path depth exceeds this value (e.g. `2` collapses per-bucket sub-allocators into their parents).                    |
 | `--remote-accessible-host`  | matches `--host`                        | When using a browser over a remote WebDriver connection, the URL that those browsers should use to access the local tachometer server ([details](#remote-control)) |
 | `--npm-install-dir`         | system temp dir                         | Where to install custom package versions. ([details](#swap-npm-dependencies))                                                                                      |
 | `--force-clean-npm-install` | `false`                                 | Always do a from-scratch NPM install when using custom package versions. ([details](#swap-npm-dependencies))                                                       |
 | `--csv-file`                | _none_                                  | Save statistical summary to this CSV file.                                                                                                                         |
 | `--csv-file-raw`            | _none_                                  | Save raw sample measurements to this CSV file.                                                                                                                     |
+| `--memory-categories-file`  | _none_                                  | When `--measure=memory`, save a diagnostic JSON describing what the probe discovered, what each `categories` rule did, and what was dropped.                       |
 | `--json-file`               | _none_                                  | Save results to this JSON file.                                                                                                                                    |
 | `--manual`                  | `false`                                 | Don't run automatically, just show URLs and collect results                                                                                                        |
 | `--trace`                   | `false`                                 | Enable performance tracing ([details](#performance-traces))                                                                                                        |

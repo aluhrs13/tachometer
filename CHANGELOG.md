@@ -10,13 +10,48 @@ project adheres to [Semantic Versioning](http://semver.org/).
 ## Unreleased
 
 - Added memory measurement support via Chromium's `memory-infra` tracing.
-  Declare `--measure=memory` (or `{ "mode": "memory", "metric": "..." }` in a
-  config file) to capture a memory dump at the end of each benchmark sample
-  and compare results across variants using the same statistical pipeline as
-  timing benchmarks. Configurable via `--memory-metric`, `--memory-process`,
-  `--memory-dump-level`, and `--memory-gc-before-dump`. Chromium-only
-  (`chrome`/`edge`). Memory results are rendered in `B`/`KiB`/`MiB`/`GiB`
-  units and auto-sample conditions now accept `B`/`KiB`/`MiB` suffixes.
+  Declare `--measure=memory` (or `{ "mode": "memory" }` in a config file) to
+  capture a memory dump at the end of each benchmark sample. Tachometer
+  auto-discovers every `(processRole, allocator, attribute)` tuple present
+  in the dump and reports each one as its own measurement, statistically
+  compared between variants using the same pipeline as timing benchmarks.
+  Configurable via `--memory-dump-level`, `--memory-gc-before-dump`, and
+  `--memory-max-allocator-depth` (which defaults to `3`).
+  Chromium-only (`chrome`/`edge`). Memory results are rendered in
+  `B`/`KiB`/`MiB`/`GiB` units and auto-sample conditions now accept
+  `B`/`KiB`/`MiB` suffixes. When the baseline for a comparison is exactly
+  zero (common for auto-discovered categories that appear in one variant
+  but not another), the relative-percent column renders as `n/a`; the
+  absolute byte delta is still shown. Auto-discovered measurements only
+  compare against the same category across variants, so the result table
+  doesn't include cross-category comparisons.
+- Added `categories` field on memory measurements for user-defined
+  include / exclude / aggregate rules. Use `{include: pattern}` to keep
+  specific tuples, `{include: pattern, sumAs: name}` to roll matching
+  tuples into one summed row, or `{exclude: pattern}` to drop tuples
+  from the candidate set. Patterns are globs over the full tuple ID
+  `<processRole>:<allocator>.<attribute>` where `*` matches any chars.
+  See the README's "Result rows are filtered by a curated rule list"
+  section for the full rule shape and aggregation constraints. **The
+  rule list is hard-coded as `memoryDefaultCategories` in
+  `src/defaults.ts`** — every benchmark in every repo gets the same
+  rows so results are directly comparable without per-config
+  bikeshedding. If a category you need is missing, propose a change
+  to that constant.
+- Added `--memory-categories-file=<path>` to write a diagnostic JSON
+  describing what the probe phase discovered, what each `categories`
+  rule did (per-rule excluded tuples, per-aggregate source list), and
+  what was dropped (the bucket users most often want to read when
+  iterating on their config). Always reflects the run that just
+  finished; cheap to compute and small on disk.
+- **Breaking** (output format): memory `compareKey` strings now use
+  the `memory:tuple:` / `memory:sum:` prefixes (e.g.
+  `memory:tuple:renderer:v8/main/heap.size`,
+  `memory:sum:network-service-size`). Previously the tuple form had no
+  `tuple:` prefix. The change makes collisions between tuple rows and
+  user-named aggregate rows impossible. Downstream consumers that key
+  off the exact compareKey string in `tachometer.results.json` need to
+  update.
 
 ## [0.7.2] 2025-07-02
 

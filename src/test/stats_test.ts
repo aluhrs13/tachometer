@@ -100,18 +100,90 @@ suite('computeDifferences', () => {
       b as Parameters<typeof computeDifferences>[0][0],
       c as Parameters<typeof computeDifferences>[0][0],
     ]);
-    // a (ms) vs b (bytes) and c (ms) vs b (bytes) should be null.
-    assert.isNull(out[0].differences[1]);
-    assert.isNull(out[1].differences[0]);
-    assert.isNull(out[1].differences[2]);
-    assert.isNull(out[2].differences[1]);
-    // Self-comparisons are always null.
-    assert.isNull(out[0].differences[0]);
-    assert.isNull(out[1].differences[1]);
-    assert.isNull(out[2].differences[2]);
-    // Same-unit pairs (a vs c) should NOT be null.
-    assert.isNotNull(out[0].differences[2]);
-    assert.isNotNull(out[2].differences[0]);
+    // a (ms) vs b (bytes) and c (ms) vs b (bytes) should be missing.
+    assert.isUndefined(out[0].differences.get(1));
+    assert.isUndefined(out[1].differences.get(0));
+    assert.isUndefined(out[1].differences.get(2));
+    assert.isUndefined(out[2].differences.get(1));
+    // Self-comparisons are always missing.
+    assert.isUndefined(out[0].differences.get(0));
+    assert.isUndefined(out[1].differences.get(1));
+    assert.isUndefined(out[2].differences.get(2));
+    // Same-unit pairs (a vs c) should be present.
+    assert.isDefined(out[0].differences.get(2));
+    assert.isDefined(out[2].differences.get(0));
+  });
+
+  test('groups comparisons by measurement.compareKey', async () => {
+    const {computeDifferences} = await import('../stats.js');
+    const makeMemResult = (
+      millis: number[],
+      compareKey: string,
+      label: string
+    ) => ({
+      stats: summaryStats(millis),
+      result: {
+        name: label,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...({} as any),
+        unit: 'bytes' as const,
+        millis,
+        measurement: {mode: 'memory', compareKey},
+      },
+    });
+    // Two variants of a malloc-size category and two variants of a v8-heap-size
+    // category. Cross-category comparisons should be suppressed even though
+    // the units match.
+    const aMalloc = makeMemResult([100, 110, 120], 'memory:r:malloc.size', 'a-malloc');
+    const bMalloc = makeMemResult([200, 210, 220], 'memory:r:malloc.size', 'b-malloc');
+    const aV8 = makeMemResult([300, 310, 320], 'memory:r:v8/main/heap.size', 'a-v8');
+    const bV8 = makeMemResult([400, 410, 420], 'memory:r:v8/main/heap.size', 'b-v8');
+    const out = computeDifferences([
+      aMalloc as Parameters<typeof computeDifferences>[0][0],
+      bMalloc as Parameters<typeof computeDifferences>[0][0],
+      aV8 as Parameters<typeof computeDifferences>[0][0],
+      bV8 as Parameters<typeof computeDifferences>[0][0],
+    ]);
+    // Same-key pairs (aMalloc <-> bMalloc, aV8 <-> bV8) should compare.
+    assert.isDefined(out[0].differences.get(1));
+    assert.isDefined(out[1].differences.get(0));
+    assert.isDefined(out[2].differences.get(3));
+    assert.isDefined(out[3].differences.get(2));
+    // Cross-key pairs (malloc <-> v8) should be absent from the sparse map.
+    assert.isUndefined(out[0].differences.get(2));
+    assert.isUndefined(out[0].differences.get(3));
+    assert.isUndefined(out[1].differences.get(2));
+    assert.isUndefined(out[1].differences.get(3));
+    assert.isUndefined(out[2].differences.get(0));
+    assert.isUndefined(out[2].differences.get(1));
+    assert.isUndefined(out[3].differences.get(0));
+    assert.isUndefined(out[3].differences.get(1));
+    // Each result should have exactly one peer entry in its sparse map -
+    // no O(N^2) iteration leaked dense storage.
+    assert.equal(out[0].differences.size, 1);
+    assert.equal(out[1].differences.size, 1);
+    assert.equal(out[2].differences.size, 1);
+    assert.equal(out[3].differences.size, 1);
+  });
+
+  test('relative difference is NaN when baseline mean is zero', async () => {
+    const {computeDifferences} = await import('../stats.js');
+    // The baseline (a) is all zeros and the variant (b) has non-zero values.
+    // Relative difference is undefined (division by zero); we expect NaN in
+    // the relative CI but a valid absolute CI.
+    const a = makeResult([0, 0, 0], 'bytes');
+    const b = makeResult([10, 11, 12], 'bytes');
+    const out = computeDifferences([
+      a as Parameters<typeof computeDifferences>[0][0],
+      b as Parameters<typeof computeDifferences>[0][0],
+    ]);
+    const diff = out[1].differences.get(0);
+    assert.isDefined(diff);
+    assert.isTrue(Number.isNaN(diff!.relative.low));
+    assert.isTrue(Number.isNaN(diff!.relative.high));
+    // Absolute difference is still well-defined.
+    assert.isFalse(Number.isNaN(diff!.absolute.low));
+    assert.isFalse(Number.isNaN(diff!.absolute.high));
   });
 });
 

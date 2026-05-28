@@ -26,7 +26,25 @@ interface Benchmark {
   measurement: Measurement;
   browser?: BrowserConfigResult;
   mean: ConfidenceInterval;
-  differences: Array<Difference | null>;
+  /**
+   * Sparse list of pairwise comparisons against other benchmarks. Each
+   * entry's `against` field is the 0-based index into this file's
+   * `benchmarks` array of the peer this benchmark was compared with.
+   *
+   * Only peers within the same comparison group are listed (same unit
+   * plus same `measurement.compareKey` for keyed measurements, or
+   * any other keyless same-unit benchmark for legacy timing
+   * benchmarks). Peers that are not comparable are simply absent from
+   * the array; do not assume `differences[i]` corresponds to
+   * `benchmarks[i]` - look at `against`.
+   *
+   * The previous dense `Array<Difference | null>` shape (one slot per
+   * benchmark, with `null` for non-comparable pairs) is gone: with
+   * auto-discovered memory measurements a single run can produce tens
+   * of thousands of benchmarks, and the dense N^2 representation no
+   * longer fits in memory.
+   */
+  differences: Difference[];
   samples: number[];
   /**
    * The unit the {@link samples} and {@link mean} values are expressed in.
@@ -36,6 +54,11 @@ interface Benchmark {
 }
 
 interface Difference {
+  /**
+   * Index into the surrounding {@link JsonOutputFile.benchmarks} array
+   * identifying the peer this difference is computed against.
+   */
+  against: number;
   absolute: ConfidenceInterval;
   percentChange: ConfidenceInterval;
 }
@@ -50,23 +73,26 @@ export function jsonOutput(
 ): JsonOutputFile {
   const benchmarks: Benchmark[] = [];
   for (const result of results) {
-    const differences: Array<Difference | null> = [];
-    for (const difference of result.differences) {
-      if (difference === null) {
-        differences.push(null);
-      } else {
-        differences.push({
-          absolute: {
-            low: difference.absolute.low,
-            high: difference.absolute.high,
-          },
-          percentChange: {
-            low: difference.relative.low * 100,
-            high: difference.relative.high * 100,
-          },
-        });
-      }
+    const differences: Difference[] = [];
+    // The sparse map already only contains entries for peers within the
+    // same comparison group, so we can serialize it directly without
+    // walking the full result list (which would re-introduce the O(N^2)
+    // memory cost we just removed in `computeDifferences`).
+    for (const [peerIndex, difference] of result.differences) {
+      differences.push({
+        against: peerIndex,
+        absolute: {
+          low: difference.absolute.low,
+          high: difference.absolute.high,
+        },
+        percentChange: {
+          low: difference.relative.low * 100,
+          high: difference.relative.high * 100,
+        },
+      });
     }
+    // Stable order: ascending peer index.
+    differences.sort((a, b) => a.against - b.against);
     benchmarks.push({
       name: result.result.name,
       bytesSent: result.result.bytesSent,

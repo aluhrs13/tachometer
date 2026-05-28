@@ -94,8 +94,8 @@ suite('e2e', function () {
           assert.isDefined(actual);
           assert.lengthOf(actual!, 2);
           const [a, b] = actual!;
-          const diffAB = a.differences[1]!;
-          const diffBA = b.differences[0]!;
+          const diffAB = a.differences.get(1)!;
+          const diffBA = b.differences.get(0)!;
 
           assert.closeTo(a.stats.mean, avgA, 0.1);
           assert.closeTo(b.stats.mean, avgB, 0.1);
@@ -133,8 +133,8 @@ suite('e2e', function () {
           assert.isDefined(actual);
           assert.lengthOf(actual!, 2);
           const [a, b] = actual!;
-          const diffAB = a.differences[1]!;
-          const diffBA = b.differences[0]!;
+          const diffAB = a.differences.get(1)!;
+          const diffBA = b.differences.get(0)!;
 
           assert.closeTo(a.stats.mean, avgA, 0.1);
           assert.closeTo(b.stats.mean, avgB, 0.1);
@@ -179,8 +179,8 @@ suite('e2e', function () {
           assert.isDefined(actual);
           assert.lengthOf(actual!, 2);
           const [a, b] = actual!;
-          const diffAB = a.differences[1]!;
-          const diffBA = b.differences[0]!;
+          const diffAB = a.differences.get(1)!;
+          const diffBA = b.differences.get(0)!;
 
           // We can't be very precise with expectations here, since setTimeout
           // can be quite variable on a resource starved machine (e.g. some of
@@ -211,8 +211,8 @@ suite('e2e', function () {
           assert.isDefined(actual);
           assert.lengthOf(actual!, 2);
           const [a, b] = actual!;
-          const diffAB = a.differences[1]!;
-          const diffBA = b.differences[0]!;
+          const diffAB = a.differences.get(1)!;
+          const diffBA = b.differences.get(0)!;
 
           // We can't be very precise with expectations here, since
           // setTimeout can be quite variable on a resource starved machine
@@ -240,8 +240,8 @@ suite('e2e', function () {
           assert.isDefined(actual);
           assert.lengthOf(actual!, 2);
           const [a, b] = actual!;
-          const diffAB = a.differences[1]!;
-          const diffBA = b.differences[0]!;
+          const diffAB = a.differences.get(1)!;
+          const diffBA = b.differences.get(0)!;
 
           // We can't be very precise with expectations here, since
           // setTimeout can be quite variable on a resource starved machine
@@ -276,8 +276,8 @@ suite('e2e', function () {
             assert.isDefined(actual);
             assert.lengthOf(actual!, 2);
             const [a, b] = actual!;
-            const diffAB = a.differences[1]!;
-            const diffBA = b.differences[0]!;
+            const diffAB = a.differences.get(1)!;
+            const diffBA = b.differences.get(0)!;
 
             // We can't be very precise with expectations here, since FCP is
             // so variable, but we can check that FCP takes at least as long

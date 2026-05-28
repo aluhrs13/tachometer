@@ -75,11 +75,30 @@ export function automaticResultTable(results: ResultStats[]): AutomaticResults {
   // result table, even if they happen to be the same in one run.
   unfixed.push(runtimeConfidenceIntervalDimension);
   if (results.length > 1) {
-    // Create an NxN matrix comparing every result to every other result.
+    // Decide between two comparison-rendering modes:
+    //
+    // - **NxN matrix** (legacy): one "vs <label>" column per result. Works
+    //   well when there are a handful of results, since the user can
+    //   visually scan all pairwise comparisons. With auto-discovered
+    //   memory measurements you can end up with hundreds of results, at
+    //   which point the matrix is both unreadable and large enough to
+    //   blow past Node's default heap budget when the table library lays
+    //   it out.
+    //
+    // - **Grouped compact column**: a single "vs others" column whose
+    //   per-row content lists only the comparisons against other results
+    //   with the same `compareKey`. Used whenever any result carries a
+    //   `compareKey` (currently only resolved memory measurements do).
+    //   Each row's cell shows at most (group-size - 1) inline diffs, so
+    //   the total content scales linearly with results.length instead of
+    //   quadratically.
+    const anyHasCompareKey = results.some(
+      (r) => r.result.measurement?.compareKey !== undefined
+    );
     const labelFn = makeUniqueLabelFn(results.map((result) => result.result));
-    for (let i = 0; i < results.length; i++) {
+    if (anyHasCompareKey) {
       unfixed.push({
-        label: `vs ${labelFn(results[i].result)}`,
+        label: 'vs others',
         tableConfig: {
           alignment: 'right',
         },
@@ -87,13 +106,43 @@ export function automaticResultTable(results: ResultStats[]): AutomaticResults {
           if (r.differences === undefined) {
             return '';
           }
-          const diff = r.differences[i];
-          if (diff === null) {
-            return ansi.format('\n[gray]{-}       ');
+          const lines: string[] = [];
+          for (const [peerIndex, diff] of r.differences) {
+            if (results[peerIndex] === r) continue;
+            const peerLabel = labelFn(results[peerIndex].result);
+            lines.push(
+              `${ansi.format(`[bold]{vs ${peerLabel}}`)}\n${formatDifference(
+                diff,
+                r
+              )}`
+            );
           }
-          return formatDifference(diff, r);
+          if (lines.length === 0) {
+            return ansi.format('[gray]{<no peer in same group>}');
+          }
+          return lines.join('\n');
         },
       });
+    } else {
+      // Create an NxN matrix comparing every result to every other result.
+      for (let i = 0; i < results.length; i++) {
+        unfixed.push({
+          label: `vs ${labelFn(results[i].result)}`,
+          tableConfig: {
+            alignment: 'right',
+          },
+          format: (r: ResultStats & Partial<ResultStatsWithDifferences>) => {
+            if (r.differences === undefined) {
+              return '';
+            }
+            const diff = r.differences.get(i);
+            if (diff === undefined) {
+              return ansi.format('\n[gray]{-}       ');
+            }
+            return formatDifference(diff, r);
+          },
+        });
+      }
     }
   }
 
@@ -215,7 +264,23 @@ function ansiCellToHtml(ansi: string): string {
   // For now, just remove ANSI color sequences and prevent line-breaks. We may
   // want to add an htmlFormat method to each dimension object so that we can
   // have more advanced control per dimension.
-  return stripAnsi(ansi).replace(/ /g, '&nbsp;');
+  //
+  // HTML-escape the cell content before substitution. Auto-discovered
+  // memory category names (e.g. `memory:renderer:partition_alloc/...size`)
+  // are derived from raw Chromium trace strings rather than user-supplied
+  // labels and so could in principle contain characters meaningful in
+  // HTML. Stripping ANSI happens first since the escape codes use control
+  // bytes that don't intersect with HTML metacharacters.
+  return escapeHtml(stripAnsi(ansi)).replace(/ /g, '&nbsp;');
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /**
@@ -302,6 +367,27 @@ function formatDifference({absolute, relative}: Difference, r: ResultStats): str
   const worseWord = isBytes ? 'more' : 'slower';
   const betterWord = isBytes ? 'less' : 'faster';
   let word, rel, abs;
+  // When the baseline mean is exactly zero, the relative-difference math
+  // is undefined (division by zero). `samplingDistributionOfRelativeDifferenceOfMeans`
+  // returns NaN/NaN in that case and the confidence interval becomes NaN
+  // too. Render this as "n/a" instead of "NaN%" so the table is still
+  // readable for auto-discovered memory categories that flip from 0 to
+  // non-zero between variants. We still show the absolute difference (it
+  // is well-defined).
+  const relativeIsNaN =
+    Number.isNaN(relative.low) || Number.isNaN(relative.high);
+  if (relativeIsNaN) {
+    word = `[bold blue]{n/a}`;
+    rel = 'n/a';
+    if (absolute.low > 0) {
+      abs = formatConfidenceInterval(absolute, fmtAbs);
+    } else if (absolute.high < 0) {
+      abs = formatConfidenceInterval(negate(absolute), fmtAbs);
+    } else {
+      abs = formatConfidenceInterval(absolute, (n) => colorizeSign(n, fmtAbs));
+    }
+    return ansi.format(`${word}\n${rel}\n${abs}`);
+  }
   if (absolute.low > 0 && relative.low > 0) {
     word = `[bold red]{${worseWord}}`;
     rel = formatConfidenceInterval(relative, percent);

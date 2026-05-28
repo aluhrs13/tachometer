@@ -37,12 +37,15 @@ suite('csv', () => {
     };
     const results = await fakeResults(config);
     const actual = formatCsvStats(results);
+    // The "long-form" CSV emits one row per benchmark (with the mean
+    // columns populated) plus one row per pairwise comparison against a
+    // peer in the same compareKey group.
     const expected = removePadding(`
-         ,         ,         ,    vs foo,           ,          ,         ,  "vs bar,baz",           ,          ,
-         ,       ms,         ,  % change,           , ms change,         ,      % change,           , ms change,
-         ,      min,      max,       min,        max,       min,      max,           min,        max,       min,      max
-      foo,  8.56459, 11.43541,          ,           ,          ,         ,    -58.02419%, -41.97581%, -12.02998, -7.97002
-"bar,baz", 18.56459, 21.43541, 67.90324%, 132.09676%,   7.97002, 12.02998,              ,           ,          ,
+   benchmark, mean min (ms), mean max (ms), vs benchmark, % change min, % change max, ms change min, ms change max
+         foo,       8.56459,      11.43541,             ,             ,             ,              ,
+         foo,              ,              ,    "bar,baz",  -58.02419%,  -41.97581%,    -12.02998,    -7.97002
+    "bar,baz",      18.56459,      21.43541,             ,             ,             ,              ,
+    "bar,baz",              ,              ,          foo,   67.90324%,  132.09676%,      7.97002,     12.02998
     `);
     assert.equal(actual, expected);
   });

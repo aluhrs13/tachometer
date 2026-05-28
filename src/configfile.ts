@@ -464,8 +464,6 @@ async function parseBenchmark(
     spec.measurement = [
       {
         mode: 'memory',
-        metric: defaults.memoryDefaultMetric,
-        process: defaults.memoryDefaultProcess,
         dumpLevel: defaults.memoryDefaultDumpLevel,
         gcBefore: defaults.memoryDefaultGcBefore,
       },

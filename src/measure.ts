@@ -6,11 +6,17 @@
 
 import * as webdriver from 'selenium-webdriver';
 
+import * as defaults from './defaults.js';
 import {Server} from './server.js';
 import {
-  Measurement,
+  AggregatedMemoryMeasurement,
+  isAggregatedMemoryMeasurement,
+  isReadyMemoryMeasurement,
+  isResolvedMemoryMeasurement,
   MemoryMeasurement,
   PerformanceEntryMeasurement,
+  ResolvedMemoryMeasurement,
+  RuntimeMeasurement,
 } from './types.js';
 import {throwUnreachable} from './util.js';
 
@@ -31,7 +37,7 @@ import {throwUnreachable} from './util.js';
  */
 export async function measure(
   driver: webdriver.WebDriver,
-  measurement: Measurement,
+  measurement: RuntimeMeasurement,
   server: Server | undefined,
   consumedPerfLog?: webdriver.logging.Entry[],
   memoryDumpCache?: MemoryDumpCache
@@ -47,6 +53,14 @@ export async function measure(
     case 'performance':
       return queryForPerformanceEntry(driver, measurement);
     case 'memory':
+      if (!isReadyMemoryMeasurement(measurement)) {
+        throw new Error(
+          'Internal error: unresolved memory measurement reached `measure()`. ' +
+            'All `mode:"memory"` measurements must be expanded into ' +
+            '`ResolvedMemoryMeasurement` or `AggregatedMemoryMeasurement` ' +
+            'entries by the probe phase before sampling begins.'
+        );
+      }
       return queryForMemory(driver, measurement, {
         consumedPerfLog,
         memoryDumpCache,
@@ -216,17 +230,23 @@ interface WebDriverWithSendDevToolsCommand {
 /**
  * Parse a number that may be reported as a hex string (the convention used
  * for memory-infra `size`-style attributes) or as a plain number.
+ *
+ * Memory-infra also reports non-numeric *string-typed* attributes alongside
+ * size-typed ones (e.g. `cc/tile_manager_*.memory_policy = "ALLOW_PREPAINT_ONLY"`).
+ * Auto-discovery enumerates every attribute key it sees, so the extraction
+ * path will be asked to parse those too. Rather than crashing the whole
+ * benchmark when the first non-numeric attribute is hit, return `undefined`
+ * so the caller can skip the tuple. The enumeration helper applies the
+ * same parser to filter non-numeric attributes out of the discovered set
+ * up front.
  */
-function parseMaybeHex(value: string | number): number {
+function parseMaybeHex(value: string | number): number | undefined {
   if (typeof value === 'number') {
-    return value;
+    return Number.isFinite(value) ? value : undefined;
   }
   // Chromium reports size attributes as lowercase hex with no `0x` prefix.
   const n = /^[0-9a-fA-F]+$/.test(value) ? parseInt(value, 16) : Number(value);
-  if (!Number.isFinite(n)) {
-    throw new Error(`Could not parse memory dump value: ${value}`);
-  }
-  return n;
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /**
@@ -248,62 +268,42 @@ function pidProcessRoles(
   return roles;
 }
 
-function isRoleMatch(
-  desired: 'renderer' | 'browser' | 'gpu' | 'all',
-  role: string | undefined
-): boolean {
-  if (desired === 'all') {
-    return true;
-  }
-  if (role === undefined) {
-    return false;
-  }
-  // Chromium reports process_name values like "Renderer", "Browser",
-  // "GPU Process". Normalise via simple substring matching.
-  if (desired === 'renderer') {
-    return role.includes('renderer');
-  }
-  if (desired === 'browser') {
-    return role.includes('browser');
-  }
-  if (desired === 'gpu') {
-    return role.includes('gpu');
-  }
-  return false;
+/**
+ * Normalise a Chromium-reported `process_name` to the role-string form
+ * used as a stable key in {@link ResolvedMemoryMeasurement}. Currently
+ * just lowercases the string; this is centralised so the probe phase and
+ * the extraction code agree on the exact key.
+ */
+export function normaliseProcessRole(name: string): string {
+  return name.toLowerCase();
+}
+
+function isRoleMatch(desiredRole: string, role: string | undefined): boolean {
+  return role !== undefined && role === desiredRole;
 }
 
 /**
- * Read a metric out of one memory dump event by dotted path
- * (e.g. `v8/main/heap.size`, `process_totals.resident_set_bytes`).
- *
+ * Read a value out of one memory dump event by allocator + attribute.
  * Returns `undefined` if this dump doesn't contain the path.
  */
-function readMetric(
+function readAttribute(
   event: MemoryDumpEvent,
-  metric: string
+  allocator: string,
+  attribute: string
 ): number | undefined {
-  const dot = metric.lastIndexOf('.');
-  if (dot === -1) {
-    throw new Error(
-      `Invalid memory metric "${metric}": expected "<allocator>.<attr>" ` +
-        `or "process_totals.<attr>"`
-    );
-  }
-  const allocator = metric.slice(0, dot);
-  const attr = metric.slice(dot + 1);
   const dumps = event.args && event.args.dumps;
   if (dumps === undefined) {
     return undefined;
   }
   if (allocator === 'process_totals') {
-    const v = dumps.process_totals?.[attr];
+    const v = dumps.process_totals?.[attribute];
     return v === undefined ? undefined : parseMaybeHex(v);
   }
   const a = dumps.allocators?.[allocator];
   if (a === undefined) {
     return undefined;
   }
-  const attrEntry = a.attrs?.[attr];
+  const attrEntry = a.attrs?.[attribute];
   if (attrEntry === undefined) {
     return undefined;
   }
@@ -311,22 +311,182 @@ function readMetric(
 }
 
 /**
- * List the allocator paths visible across the supplied dump events, for use
- * in error messages.
+ * One discovered `(processRole, allocator, attribute)` tuple from a
+ * captured memory dump. Returned by {@link enumerateMemoryDump} and used
+ * by the runner's probe phase to synthesise
+ * {@link ResolvedMemoryMeasurement} entries.
  */
-function availableAllocators(events: MemoryDumpEvent[]): string[] {
-  const out = new Set<string>();
-  for (const ev of events) {
-    const dumps = ev.args?.dumps;
-    if (!dumps) continue;
-    if (dumps.process_totals) {
-      out.add('process_totals');
+export interface MemoryDumpCategory {
+  processRole: string;
+  allocator: string;
+  attribute: string;
+}
+
+/**
+ * Returns true if any segment of an allocator path looks like a
+ * per-instance identifier whose value isn't stable across samples
+ * (pointer address, UUID, mangled type hash) - i.e. the tuple cannot be
+ * tracked across the run. The aggregate parent dump (without the
+ * identifier segment) typically reports the sum and is comparable.
+ */
+function hasInstanceIdentifierSegment(allocator: string): boolean {
+  for (const segment of allocator.split('/')) {
+    // 12+ char pure hex string (optionally with leading underscores) -
+    // covers shared_memory UUIDs (`<32hex>`), Blink GC mangled type IDs
+    // (`__<12-16hex>`), and similar machine-generated identifiers. We
+    // don't try to distinguish "stable hash" from "unstable UUID":
+    // both are unreadable to humans, both produce hundreds-to-thousands
+    // of sibling rows, and the aggregate parent dump is always the row
+    // a human would want anyway. 12 chars is the smallest threshold
+    // that catches all observed identifiers without colliding with
+    // legitimate English-word-ish allocator segment names (the longest
+    // hex-only English words like `feedback` are 8 chars).
+    if (/^_*[0-9a-fA-F]{12,}$/.test(segment)) return true;
+    // `_0x<hex>` raw pointer address suffix (e.g. `client_0x1`,
+    // `cache_0x7fff12345abc`).
+    if (/_0x[0-9a-fA-F]+$/.test(segment)) return true;
+    // Bare `0x<hex>` segment - same idea as the suffix form but the
+    // hex address occupies a whole `/`-separated segment (e.g.
+    // `sqlite/Passwords_connection/0x465400EC9DC0`). Chromium's
+    // dump providers append these as standalone child dumps under a
+    // semantic parent.
+    if (/^0x[0-9a-fA-F]+$/.test(segment)) return true;
+    // `_<hex>:<hex>:<hex>:...` colon-separated UUID/mailbox identifier
+    // (e.g. `mailbox_00:4F:65:5D:...`).
+    if (/_[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){3,}/.test(segment)) return true;
+  }
+  return false;
+}
+
+/**
+ * The set of memory-infra dump attributes tachometer tracks. Curated to
+ * focus on "actual memory in bytes" - the question every memory
+ * benchmark is asking - rather than the dozens of counters
+ * (`object_count`, `alloc_count`, ...), pool bookkeeping
+ * (`regular_pool_usage`, `brp_pool_largest_reservation`, ...), boolean
+ * flags (`is_peak_rss_resettable`, `is_prepaint`), and derived rates
+ * (`syscalls_per_minute`, `brp_quarantined_bytes_per_minute`) that
+ * memory-infra also emits and that just add noise to a memory result
+ * table.
+ *
+ * - `size`: the primary "bytes allocated for this dump" metric that
+ *   every named allocator reports.
+ * - `effective_size`: bytes attributed after sharing is split across
+ *   owners (the "fair share" view of memory).
+ * - `peak_resident_set_size`, `private_footprint_bytes`,
+ *   `resident_set_bytes`: process-level RSS-style attributes reported
+ *   under `process_totals` on Chromium's supported platforms.
+ */
+/**
+ * The set of memory-infra dump attributes tachometer tracks, exposed
+ * as a sorted array for diagnostic output (see the
+ * `--memory-categories-file` report). The internal set used by
+ * {@link enumerateMemoryDump} is derived from this list.
+ */
+export const TRACKED_ATTRIBUTES_LIST: ReadonlyArray<string> = [
+  'size',
+  'effective_size',
+  'peak_resident_set_size',
+  'private_footprint_bytes',
+  'resident_set_bytes',
+];
+
+const TRACKED_ATTRIBUTES: ReadonlySet<string> = new Set(TRACKED_ATTRIBUTES_LIST);
+
+/**
+ * Enumerate every `(processRole, allocator, attribute)` tuple present in
+ * a captured memory dump. Used by the runner's probe phase to discover
+ * what categories to report. Includes `process_totals.*` as
+ * `allocator='process_totals'`.
+ *
+ * Tuples without a known process role (i.e. no matching
+ * `process_name` metadata event yet observed) are dropped, since they
+ * cannot be addressed in later samples by a stable role key.
+ *
+ * Only attributes in {@link TRACKED_ATTRIBUTES} are enumerated. The
+ * dozens of counters, pool bookkeeping, boolean flags, and derived
+ * rates that memory-infra also emits are ignored - they aren't bytes
+ * and don't answer a memory-cost question.
+ *
+ * When `options.maxAllocatorDepth` is set, allocators whose `/`-segment
+ * count exceeds that value are skipped. Chromium memory-infra already
+ * reports parent allocators as the sum of their children's roll-up
+ * attributes, so dropping deeper paths usually preserves the
+ * high-level picture while collapsing per-bucket / per-sub-arena
+ * noise. `process_totals` is always depth 1 and is unaffected.
+ */
+export function enumerateMemoryDump(
+  events: Array<MemoryDumpEvent | ProcessMetadataEvent>,
+  options: {maxAllocatorDepth?: number} = {}
+): MemoryDumpCategory[] {
+  const maxDepth = options.maxAllocatorDepth;
+  const dumps = events.filter(
+    (e): e is MemoryDumpEvent => e.ph === 'v' || e.ph === 'V'
+  );
+  const roles = pidProcessRoles(events);
+
+  const tuples = new Map<string, MemoryDumpCategory>();
+  const addTuple = (
+    processRole: string,
+    allocator: string,
+    attribute: string
+  ) => {
+    const key = `${processRole}\u0000${allocator}\u0000${attribute}`;
+    if (!tuples.has(key)) {
+      tuples.set(key, {processRole, allocator, attribute});
     }
-    for (const name of Object.keys(dumps.allocators ?? {})) {
-      out.add(name);
+  };
+
+  for (const dump of dumps) {
+    const role = roles.get(dump.pid);
+    if (role === undefined) {
+      continue;
+    }
+    const d = dump.args?.dumps;
+    if (!d) continue;
+    if (d.process_totals) {
+      for (const [attr, value] of Object.entries(d.process_totals)) {
+        if (!TRACKED_ATTRIBUTES.has(attr)) continue;
+        // Only include numeric attributes - non-numeric ones (e.g. policy
+        // enums) would crash the extraction path.
+        if (parseMaybeHex(value) === undefined) continue;
+        addTuple(role, 'process_totals', attr);
+      }
+    }
+    for (const [allocator, a] of Object.entries(d.allocators ?? {})) {
+      // Skip per-object instance dumps whose name embeds a hex address;
+      // the address changes between samples so the tuple cannot be
+      // tracked across the run. The aggregate parent dump (no `_0x`
+      // suffix) reports the sum.
+      if (hasInstanceIdentifierSegment(allocator)) continue;
+      // Honor the max-depth cap by dropping deeper allocators outright.
+      // Chromium reports the same roll-up attributes at every ancestor,
+      // so the parent's row already covers the sum.
+      if (maxDepth !== undefined && allocator.split('/').length > maxDepth) {
+        continue;
+      }
+      for (const [attr, entry] of Object.entries(a.attrs ?? {})) {
+        if (!TRACKED_ATTRIBUTES.has(attr)) continue;
+        // Filter out non-numeric attribute values up front so the result
+        // set is restricted to comparable scalars.
+        if (parseMaybeHex(entry.value) === undefined) continue;
+        addTuple(role, allocator, attr);
+      }
     }
   }
-  return [...out].sort();
+
+  return [...tuples.values()].sort((a, b) => {
+    if (a.processRole !== b.processRole) {
+      return a.processRole < b.processRole ? -1 : 1;
+    }
+    if (a.allocator !== b.allocator) {
+      return a.allocator < b.allocator ? -1 : 1;
+    }
+    if (a.attribute !== b.attribute) {
+      return a.attribute < b.attribute ? -1 : 1;
+    }
+    return 0;
+  });
 }
 
 /**
@@ -372,6 +532,15 @@ const MEMORY_DUMP_TIMEOUT_MS = 5000;
 const MEMORY_DUMP_POLL_INTERVAL_MS = 100;
 
 /**
+ * When `drainUntilQuiet` is enabled (the probe path), how many consecutive
+ * empty drains we need to see after the first matching dump event before
+ * we consider the dump complete. Empty drains are separated by
+ * {@link MEMORY_DUMP_POLL_INTERVAL_MS}, so 3 empty drains means roughly
+ * 300ms of quiet trace channel.
+ */
+const MEMORY_DUMP_QUIET_DRAINS = 3;
+
+/**
  * A cache of one captured memory-infra dump. A single dump contains every
  * allocator's stats for every process, so when a spec has multiple memory
  * measurements (e.g. one for `v8/main/heap.size`, one for `blink_gc.size`)
@@ -394,15 +563,63 @@ export interface MemoryDumpCache {
 }
 
 /**
+ * Wrap a promise with a timeout. Resolves with the promise's value if
+ * it completes within `timeoutMs`, or with `'timeout'` if not.
+ * Used as a watchdog around Chrome DevTools Protocol commands sent via
+ * `sendDevToolsCommand`, which can hang indefinitely if chromedriver
+ * stalls between Chrome and the WebDriver client - without this, a
+ * single hung command pins the whole benchmark run.
+ */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number
+): Promise<T | 'timeout'> {
+  let handle: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<'timeout'>((resolve) => {
+    handle = setTimeout(() => resolve('timeout'), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (handle !== undefined) clearTimeout(handle);
+  }
+}
+
+/**
+ * Maximum time we'll wait for a single `sendDevToolsCommand` call to
+ * return. Chromium's `Tracing.requestMemoryDump` and
+ * `HeapProfiler.collectGarbage` normally respond within a few hundred
+ * milliseconds; if they don't, something has gone wrong (chromedriver
+ * stalled, the renderer crashed, the trace pipeline is stuck), and
+ * indefinite blocking just turns into a "silent hang" in the runner.
+ * Bound the wait so the per-attempt retry loop can move on.
+ */
+const DEVTOOLS_COMMAND_TIMEOUT_MS = 10000;
+
+/**
  * Trigger one memory-infra dump and return all observed trace events.
  * Returns `undefined` if no dump events arrived within the timeout.
+ *
+ * When `drainUntilQuiet` is set (the probe path uses this), the function
+ * keeps polling the performance log after the first matching dump event
+ * is observed, until the log goes quiet (no new entries for several poll
+ * intervals) or the timeout fires. This ensures we observe every
+ * process's dump event, not just the first one.
  */
 async function captureMemoryDumpEvents(
   driver: webdriver.WebDriver,
-  measurement: MemoryMeasurement,
+  measurement: MemoryMeasurement | ResolvedMemoryMeasurement,
   options: {
     consumedPerfLog?: webdriver.logging.Entry[];
     timeoutMs?: number;
+    drainUntilQuiet?: boolean;
+    /**
+     * Override for the watchdog around `sendDevToolsCommand` calls.
+     * Defaults to {@link DEVTOOLS_COMMAND_TIMEOUT_MS}; tests pass a
+     * short value so they can verify the watchdog without hanging for
+     * 10 seconds.
+     */
+    devtoolsTimeoutMs?: number;
   }
 ): Promise<
   | {
@@ -420,14 +637,22 @@ async function captureMemoryDumpEvents(
   }
 
   const consumedPerfLog = options.consumedPerfLog;
+  const devtoolsTimeoutMs =
+    options.devtoolsTimeoutMs ?? DEVTOOLS_COMMAND_TIMEOUT_MS;
 
   const gcBefore = measurement.gcBefore !== false;
   if (gcBefore) {
     try {
-      await driverWithCdp.sendDevToolsCommand('HeapProfiler.enable', {});
-      await driverWithCdp.sendDevToolsCommand(
-        'HeapProfiler.collectGarbage',
-        {}
+      // Both GC calls go through the same watchdog. If chromedriver hangs
+      // on either, we'd otherwise stall the whole sample. GC failures /
+      // timeouts are non-fatal: we still want to take the dump.
+      await withTimeout(
+        driverWithCdp.sendDevToolsCommand('HeapProfiler.enable', {}),
+        devtoolsTimeoutMs
+      );
+      await withTimeout(
+        driverWithCdp.sendDevToolsCommand('HeapProfiler.collectGarbage', {}),
+        devtoolsTimeoutMs
       );
     } catch {
       // GC failures are non-fatal: we still want to take the dump.
@@ -439,21 +664,39 @@ async function captureMemoryDumpEvents(
   // to the accumulator too  they're still valid trace events.
   await drainPerformanceLog(driver, consumedPerfLog);
 
-  const dumpResult = (await driverWithCdp.sendDevToolsCommand(
-    'Tracing.requestMemoryDump',
-    {
+  const dumpResultOrTimeout = await withTimeout(
+    driverWithCdp.sendDevToolsCommand('Tracing.requestMemoryDump', {
       deterministic: false,
       levelOfDetail: measurement.dumpLevel ?? 'detailed',
-    }
-  )) as {dumpGuid?: string; success?: boolean} | undefined;
+    }),
+    devtoolsTimeoutMs
+  );
+  if (dumpResultOrTimeout === 'timeout') {
+    // The DevTools `Tracing.requestMemoryDump` call itself hung. Returning
+    // `undefined` lets the caller treat this attempt the same as a normal
+    // dump-never-arrived timeout: the per-attempt retry loop in
+    // `takeSamples` reloads the page and tries again, instead of pinning
+    // Node forever waiting on a chromedriver pipe that's already stuck.
+    return undefined;
+  }
+  const dumpResult = dumpResultOrTimeout as
+    | {dumpGuid?: string; success?: boolean}
+    | undefined;
 
   const dumpGuid =
     dumpResult && typeof dumpResult.dumpGuid === 'string'
       ? dumpResult.dumpGuid
       : undefined;
 
-  // Poll the performance log until we see dump events matching our GUID, or
-  // we hit the internal timeout.
+  // Poll the performance log until we see dump events matching our GUID,
+  // or (in probe/drain-until-quiet mode) until the log goes quiet for a
+  // few intervals, or we hit the internal timeout.
+  //
+  // We only retain memory-dump (`ph: 'v'` / `'V'`) and process metadata
+  // (`ph: 'M'`, `name: 'process_name'`) events. With memory-infra trace
+  // categories enabled alongside v8/blink/gc the perf log can deliver
+  // tens of thousands of unrelated trace events per sample - keeping
+  // them all in heap across an auto-sample run is what blows past 8 GB.
   const events: Array<MemoryDumpEvent | ProcessMetadataEvent> = [];
   const accumulateEvents = (entries: webdriver.logging.Entry[]) => {
     for (const entry of entries) {
@@ -469,16 +712,29 @@ async function captureMemoryDumpEvents(
       ) {
         continue;
       }
-      events.push(
-        parsed.message.params as unknown as
-          | MemoryDumpEvent
-          | ProcessMetadataEvent
-      );
+      const params = parsed.message.params as unknown as
+        | MemoryDumpEvent
+        | ProcessMetadataEvent;
+      // Drop everything that isn't a memory dump or a process_name
+      // metadata event - those are the only events extraction and
+      // enumeration look at.
+      if (
+        params.ph !== 'v' &&
+        params.ph !== 'V' &&
+        !(
+          params.ph === 'M' &&
+          (params as ProcessMetadataEvent).name === 'process_name'
+        )
+      ) {
+        continue;
+      }
+      events.push(params);
     }
   };
 
   const deadline = Date.now() + (options.timeoutMs ?? MEMORY_DUMP_TIMEOUT_MS);
   let haveMatchingDump = false;
+  let quietDrains = 0;
   while (true) {
     await new Promise((r) => setTimeout(r, MEMORY_DUMP_POLL_INTERVAL_MS));
     const entries = await drainPerformanceLog(driver, consumedPerfLog);
@@ -494,7 +750,20 @@ async function captureMemoryDumpEvents(
       haveMatchingDump = events.some((e) => e.ph === 'v' || e.ph === 'V');
     }
     if (haveMatchingDump) {
-      break;
+      if (!options.drainUntilQuiet) {
+        break;
+      }
+      // Probe path: after the first matching dump event, keep draining until
+      // we see a few consecutive empty polls. That lets the trace channel
+      // deliver dump events for every other process Chromium spawned.
+      if (entries.length === 0) {
+        quietDrains++;
+        if (quietDrains >= MEMORY_DUMP_QUIET_DRAINS) {
+          break;
+        }
+      } else {
+        quietDrains = 0;
+      }
     }
     if (Date.now() >= deadline) {
       break;
@@ -514,12 +783,64 @@ async function captureMemoryDumpEvents(
  * metadata is known); returns `undefined` only when there are simply no
  * matching dumps to read from.
  */
+/**
+ * Pure extraction of one resolved memory measurement from a captured dump.
+ *
+ * Missing-category policy:
+ * - Process role observed in this dump but allocator/attribute absent
+ *   for that role → return `0`. The allocator legitimately reported
+ *   zero (or just did not report this attribute this sample).
+ * - Process role NOT observed in this dump → return `0`. The dump
+ *   itself arrived (so retrying won't help), but the process is gone.
+ *   This happens routinely with Chromium's transient utility services
+ *   (e.g. `service: quarantine.mojom.quarantine` is spawned for
+ *   per-task Mark-of-the-Web checks on Windows and shuts down when
+ *   the task completes). The process was alive during the probe, so
+ *   the tuple is in the result set; at sample time it's gone, so the
+ *   memory it consumed is `0`. We never want a transient service to
+ *   exhaust the per-attempt retry budget and abort the whole run.
+ * - No matching dump events at all → return `undefined`. This is the
+ *   only legitimate retry signal (the dump request itself didn't
+ *   complete, or trace events haven't arrived yet); reloading the
+ *   page might unblock it.
+ */
 function extractMemoryMetric(
   captured: {
     events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
     dumpGuid: string | undefined;
   },
-  measurement: MemoryMeasurement
+  measurement: ResolvedMemoryMeasurement
+): number | undefined {
+  const valuesByRole = readPerRoleSum(
+    captured,
+    measurement.processRole,
+    measurement.allocator,
+    measurement.attribute
+  );
+  return valuesByRole;
+}
+
+/**
+ * Sum the value of one allocator's attribute across every dump for
+ * one process role. Returns:
+ *
+ * - `undefined` if the dump itself didn't arrive (caller should retry).
+ * - `0` if the role is missing or the allocator/attribute is absent
+ *   for the role (per bug-6 missing-category policy).
+ * - The summed numeric value otherwise.
+ *
+ * Shared between {@link extractMemoryMetric} (single-tuple) and
+ * {@link extractAggregatedMemoryMetric} (per-source loop) so both
+ * paths agree on the missing-policy.
+ */
+function readPerRoleSum(
+  captured: {
+    events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+    dumpGuid: string | undefined;
+  },
+  processRole: string,
+  allocator: string,
+  attribute: string
 ): number | undefined {
   const {events, dumpGuid} = captured;
   const allDumps = events.filter(
@@ -538,81 +859,96 @@ function extractMemoryMetric(
     return undefined;
   }
 
-  const desired = measurement.process ?? 'renderer';
   const roles = pidProcessRoles(events);
-
   const matchingDumps = dumps.filter((d) =>
-    isRoleMatch(desired, roles.get(d.pid))
+    isRoleMatch(processRole, roles.get(d.pid))
   );
 
   if (matchingDumps.length === 0) {
-    // No process-role metadata available (which is common when Chromium
-    // hasn't emitted process_name events yet). Fall back to all dumps so
-    // we still return a sensible value.
-    if (desired === 'renderer' && roles.size === 0) {
-      // Best effort: pick the dump that actually has the metric.
-      const fallback = dumps.find(
-        (d) => readMetric(d, measurement.metric) !== undefined
-      );
-      if (fallback) {
-        const v = readMetric(fallback, measurement.metric);
-        if (v !== undefined) return v;
-      }
-    }
-    throw new Error(
-      `No memory dump found for process "${desired}". ` +
-        `Known process roles: ${
-          [...new Set(roles.values())].join(', ') || '<none>'
-        }.`
-    );
+    // Process role wasn't observed in this sample's dumps even though
+    // the dump itself arrived. The process is gone - treat the tuple
+    // as zero rather than retrying the whole page (retries won't bring
+    // back a transient service). See "Missing-category policy" above.
+    return 0;
   }
 
   let total = 0;
-  let found = false;
+  let any = false;
   for (const dump of matchingDumps) {
-    const v = readMetric(dump, measurement.metric);
+    const v = readAttribute(dump, allocator, attribute);
     if (v !== undefined) {
       total += v;
-      found = true;
-      if (desired !== 'all') {
-        // For non-`all` selectors we only want the first matching process.
-        return v;
-      }
+      any = true;
     }
   }
-  if (!found) {
-    throw new Error(
-      `Memory metric "${measurement.metric}" not found in dump. ` +
-        `Available top-level allocators: ${availableAllocators(
-          matchingDumps
-        ).join(', ')}.`
+  // Role's dumps were present but this allocator/attribute was absent
+  // in every one of them - legitimate zero (or absent) result.
+  return any ? total : 0;
+}
+
+/**
+ * Pure extraction of an aggregated memory measurement from a captured
+ * dump. Sums each `(processRole, allocator)` source's value of the
+ * shared `attribute` and returns the total.
+ *
+ * Missing-source policy mirrors {@link extractMemoryMetric} per source:
+ * - A source whose process role is gone contributes 0.
+ * - A source whose allocator is absent contributes 0.
+ * - If the dump itself didn't arrive, returns `undefined` so the
+ *   caller's retry loop can reload the page. (We don't sum partial
+ *   data; if the dump is missing we have nothing to sum.)
+ */
+function extractAggregatedMemoryMetric(
+  captured: {
+    events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+    dumpGuid: string | undefined;
+  },
+  measurement: AggregatedMemoryMeasurement
+): number | undefined {
+  const {events} = captured;
+  const allDumps = events.filter(
+    (e): e is MemoryDumpEvent => e.ph === 'v' || e.ph === 'V'
+  );
+  if (allDumps.length === 0) {
+    return undefined;
+  }
+  let total = 0;
+  for (const source of measurement.sources) {
+    const v = readPerRoleSum(
+      captured,
+      source.processRole,
+      source.allocator,
+      measurement.attribute
     );
+    if (v === undefined) {
+      // Dump didn't arrive at all - mirror single-tuple retry signal.
+      return undefined;
+    }
+    total += v;
   }
   return total;
 }
 
 /**
- * Trigger a memory-infra dump via the Chrome DevTools Protocol and read the
- * requested metric out of it.
+ * Trigger a memory-infra dump via the Chrome DevTools Protocol and read
+ * the requested resolved memory tuple out of it.
  *
- * Returns the value in bytes, or `undefined` when no dump arrived within
- * the internal timeout (callers may then retry on a fresh page attempt).
+ * Returns the value in bytes (possibly zero - see missing-category policy
+ * on {@link extractMemoryMetric}), or `undefined` when no dump arrived
+ * within the internal timeout or the resolved measurement's process role
+ * isn't represented in the dump yet (callers may then retry on a fresh
+ * page attempt).
  *
  * When `options.memoryDumpCache` is supplied, a single dump is shared
  * across all calls that use the same cache object. Only the first call
  * triggers `Tracing.requestMemoryDump`; subsequent calls extract their
  * metric from the cached events synchronously. The runner allocates one
- * cache per page attempt so that multiple memory measurements on the same
- * page only fire one dump per sample. Note that this also means the
- * `gcBefore` and `dumpLevel` settings on the *first* memory measurement
- * of the spec determine the dump's behaviour; settings on later
- * measurements are ignored for cached dumps (a single dump only has one
- * level of detail, and a single GC is semantically correct since all
- * metrics are read from the same moment in time).
+ * cache per page attempt so that all auto-discovered memory measurements
+ * on the same page only fire one dump per sample.
  */
 export async function queryForMemory(
   driver: webdriver.WebDriver,
-  measurement: MemoryMeasurement,
+  measurement: ResolvedMemoryMeasurement | AggregatedMemoryMeasurement,
   options: {
     consumedPerfLog?: webdriver.logging.Entry[];
     /**
@@ -621,6 +957,11 @@ export async function queryForMemory(
      * {@link MEMORY_DUMP_TIMEOUT_MS}.
      */
     timeoutMs?: number;
+    /**
+     * Override for the watchdog around `sendDevToolsCommand` calls.
+     * Defaults to {@link DEVTOOLS_COMMAND_TIMEOUT_MS}.
+     */
+    devtoolsTimeoutMs?: number;
     /**
      * If supplied, the captured dump events are cached on this object so
      * subsequent calls with the same cache skip the dump request entirely
@@ -631,17 +972,28 @@ export async function queryForMemory(
 ): Promise<number | undefined> {
   const cache = options.memoryDumpCache;
 
+  const extractFromCaptured = (captured: {
+    events: Array<MemoryDumpEvent | ProcessMetadataEvent>;
+    dumpGuid: string | undefined;
+  }): number | undefined => {
+    if (isAggregatedMemoryMeasurement(measurement)) {
+      return extractAggregatedMemoryMetric(captured, measurement);
+    }
+    return extractMemoryMetric(captured, measurement);
+  };
+
   // If we already captured a dump for this attempt, just read the metric.
   if (cache && cache.events !== undefined) {
-    return extractMemoryMetric(
-      {events: cache.events, dumpGuid: cache.dumpGuid},
-      measurement
-    );
+    return extractFromCaptured({
+      events: cache.events,
+      dumpGuid: cache.dumpGuid,
+    });
   }
 
   const captured = await captureMemoryDumpEvents(driver, measurement, {
     consumedPerfLog: options.consumedPerfLog,
     timeoutMs: options.timeoutMs,
+    devtoolsTimeoutMs: options.devtoolsTimeoutMs,
   });
   if (captured === undefined) {
     return undefined;
@@ -652,7 +1004,38 @@ export async function queryForMemory(
     cache.dumpGuid = captured.dumpGuid;
   }
 
-  return extractMemoryMetric(captured, measurement);
+  return extractFromCaptured(captured);
+}
+
+/**
+ * Trigger a memory-infra dump, drain the trace channel until quiet, and
+ * enumerate every `(processRole, allocator, attribute)` tuple present in
+ * it. Used by the runner's probe phase to discover what categories to
+ * report on for the rest of the run.
+ *
+ * Returns `undefined` if no dump arrived in time. The caller will surface
+ * a clear error - probing should never silently produce zero categories.
+ */
+export async function probeMemoryCategories(
+  driver: webdriver.WebDriver,
+  measurement: MemoryMeasurement,
+  options: {
+    consumedPerfLog?: webdriver.logging.Entry[];
+    timeoutMs?: number;
+  } = {}
+): Promise<MemoryDumpCategory[] | undefined> {
+  const captured = await captureMemoryDumpEvents(driver, measurement, {
+    consumedPerfLog: options.consumedPerfLog,
+    timeoutMs: options.timeoutMs,
+    drainUntilQuiet: true,
+  });
+  if (captured === undefined) {
+    return undefined;
+  }
+  return enumerateMemoryDump(captured.events, {
+    maxAllocatorDepth:
+      measurement.maxAllocatorDepth ?? defaults.memoryDefaultMaxAllocatorDepth,
+  });
 }
 // ----- end memory measurement -----------------------------------------------
 
@@ -660,7 +1043,15 @@ export async function queryForMemory(
  * Return a good-enough label for the given measurement, to disambiguate cases
  * where there are multiple measurements on the same page.
  */
-export function measurementName(measurement: Measurement): string {
+export function measurementName(measurement: RuntimeMeasurement): string {
+  // Aggregated memory measurements are special-cased: they don't carry a
+  // user-supplied `name` (the user names them via `sumAs`), and we want
+  // a consistent `memory:sum:<name>` label that mirrors the
+  // `memory:tuple:` format used for resolved memory rows. Check before
+  // the generic `measurement.name` fallback below.
+  if (measurement.mode === 'memory' && isAggregatedMemoryMeasurement(measurement)) {
+    return `memory:sum:${measurement.sumAs}`;
+  }
   if (measurement.name) {
     return measurement.name;
   }
@@ -675,10 +1066,72 @@ export function measurementName(measurement: Measurement): string {
         ? 'fcp'
         : measurement.entryName;
     case 'memory':
-      return `memory:${measurement.metric}`;
+      if (isResolvedMemoryMeasurement(measurement)) {
+        return `memory:tuple:${measurement.processRole}:${measurement.allocator}.${measurement.attribute}`;
+      }
+      // Unresolved (pre-probe) memory measurements don't yet have a
+      // tuple; show a generic name. Real result rows always carry the
+      // resolved or aggregated form, so this branch is only hit for
+      // debug/log output during the probe phase.
+      return 'memory';
   }
   throwUnreachable(
     measurement,
     `Internal error: unknown measurement type ` + JSON.stringify(measurement)
   );
+}
+
+/**
+ * Compute the `compareKey` for a resolved memory measurement. Use this
+ * (rather than a hand-built string) anywhere the runner needs to set the
+ * `compareKey` field so the format stays consistent with the label.
+ */
+/**
+ * Compute the stats `compareKey` for a resolved (single-tuple) memory
+ * measurement. The `memory:tuple:` prefix keeps these structurally
+ * distinct from aggregate keys (see {@link memoryAggregateCompareKey})
+ * and from any future stats-engine keys.
+ */
+export function memoryCompareKey(m: ResolvedMemoryMeasurement): string {
+  return `memory:tuple:${m.processRole}:${m.allocator}.${m.attribute}`;
+}
+
+/**
+ * Compute the stats `compareKey` for an aggregated memory measurement.
+ * The `memory:sum:` prefix is reserved for aggregates - it cannot
+ * collide with a `memory:tuple:` key even if a user picks a `sumAs`
+ * that happens to look like a tuple identifier.
+ */
+export function memoryAggregateCompareKey(
+  m: AggregatedMemoryMeasurement
+): string {
+  return `memory:sum:${m.sumAs}`;
+}
+
+/**
+ * Compile a glob pattern into an anchored RegExp. Used by
+ * {@link MemoryMeasurement.categories} to match probe-discovered
+ * tuple IDs (`<processRole>:<allocator>.<attribute>`).
+ *
+ * Glob semantics: `*` matches any sequence of characters including
+ * `:`, `/`, and `.`. All other characters are matched literally
+ * (regex specials are escaped). The returned RegExp is anchored on
+ * both ends so we always test the whole tuple ID.
+ */
+export function compileGlob(pattern: string): RegExp {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const regexBody = escaped.replace(/\*/g, '.*');
+  return new RegExp('^' + regexBody + '$');
+}
+
+/**
+ * Build the full tuple identifier string used for glob matching:
+ * `<processRole>:<allocator>.<attribute>`.
+ */
+export function categoryTupleId(t: {
+  processRole: string;
+  allocator: string;
+  attribute: string;
+}): string {
+  return `${t.processRole}:${t.allocator}.${t.attribute}`;
 }

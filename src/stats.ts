@@ -32,7 +32,24 @@ export interface ResultStats {
 }
 
 export interface ResultStatsWithDifferences extends ResultStats {
-  differences: Array<Difference | null>;
+  /**
+   * Sparse map from peer index (in the original `stats` array passed to
+   * {@link computeDifferences}) to the pairwise difference against that
+   * peer. Only peers within the same comparison group have entries:
+   *
+   * - Results that carry a `compareKey` on their {@link Measurement}
+   *   (currently only auto-discovered memory measurements do) compare
+   *   only against other results with the same `(unit, compareKey)`
+   *   pair.
+   * - Results without a `compareKey` compare against every other
+   *   compareKey-less result with the same unit. This preserves the
+   *   pre-existing all-pairs behavior for traditional timing benchmarks.
+   *
+   * Indices absent from the map mean "no comparison" - callers should
+   * treat missing entries the same way they previously treated `null`
+   * slots in the dense array.
+   */
+  differences: Map<number, Difference>;
 }
 
 export interface Difference {
@@ -134,10 +151,7 @@ export function autoSampleConditionsResolved(
     // TODO We may want to offer more control over which particular set of
     // differences we care about resolving. For the moment, a condition of 1%
     // means we'll try to resolve a 1% difference pairwise in both directions.
-    for (const diff of differences) {
-      if (diff === null) {
-        continue;
-      }
+    for (const diff of differences.values()) {
       for (const condition of absolute) {
         if (intervalContains(diff.absolute, condition)) {
           return false;
@@ -160,31 +174,64 @@ function sumOf(data: number[]): number {
 /**
  * Given an array of results, return a new array of results where each result
  * has additional statistics describing how it compares to each other result.
+ *
+ * The output's `differences` field is a sparse `Map<peerIndex, Difference>`.
+ * Comparisons are only computed within the same "group" - two results are
+ * in the same group when they share the same unit AND either both have the
+ * same `compareKey` or neither has a `compareKey`. This avoids the O(N^2)
+ * pairwise iteration that the previous dense implementation performed -
+ * with auto-discovered memory measurements, N can be in the hundreds
+ * (variants x discovered tuples) and the all-pairs work plus storage was
+ * the dominant cost of the run.
  */
 export function computeDifferences(
   stats: ResultStats[]
 ): ResultStatsWithDifferences[] {
-  return stats.map((result) => {
-    return {
-      ...result,
-      differences: stats.map((other) => {
-        if (other === result) {
-          return null;
-        }
-        // Don't compute a difference between results with different units
-        // (e.g. timing vs memory). The numeric subtraction would still
-        // succeed, but the resulting "percent change" and "absolute
-        // difference" would be meaningless because they mix unrelated
-        // quantities.
-        const aUnit = other.result.unit ?? 'ms';
-        const bUnit = result.result.unit ?? 'ms';
-        if (aUnit !== bUnit) {
-          return null;
-        }
-        return computeDifference(other.stats, result.stats);
-      }),
-    };
-  });
+  // Bucket result indices by (unit, compareKey). Results without a
+  // compareKey collapse into a single per-unit bucket so they continue
+  // to be compared pairwise with every other compareKey-less result of
+  // the same unit, matching the original all-pairs behavior for timing
+  // benchmarks.
+  const NO_KEY = '\u0000';
+  const buckets = new Map<string, number[]>();
+  for (let i = 0; i < stats.length; i++) {
+    const unit = stats[i].result.unit ?? 'ms';
+    const key = stats[i].result.measurement?.compareKey ?? NO_KEY;
+    const bucketKey = `${unit}|${key}`;
+    let bucket = buckets.get(bucketKey);
+    if (bucket === undefined) {
+      bucket = [];
+      buckets.set(bucketKey, bucket);
+    }
+    bucket.push(i);
+  }
+
+  const out: ResultStatsWithDifferences[] = stats.map((s) => ({
+    ...s,
+    differences: new Map<number, Difference>(),
+  }));
+
+  // For each bucket, compute the ordered pairwise differences. Note that
+  // computeDifference(a, b) and computeDifference(b, a) are asymmetric
+  // (relative difference is computed against the first argument's mean),
+  // so we need both directions per unordered pair.
+  for (const bucket of buckets.values()) {
+    if (bucket.length < 2) continue;
+    for (let a = 0; a < bucket.length; a++) {
+      const i = bucket[a];
+      for (let b = 0; b < bucket.length; b++) {
+        if (a === b) continue;
+        const j = bucket[b];
+        // From result i's perspective, the comparison against peer j is
+        // computeDifference(j, i) - matching the original semantics where
+        // `differences[j]` on result i held
+        // computeDifference(stats[j].stats, stats[i].stats).
+        out[i].differences.set(j, computeDifference(stats[j].stats, stats[i].stats));
+      }
+    }
+  }
+
+  return out;
 }
 
 export function computeDifference(
@@ -255,6 +302,13 @@ function samplingDistributionOfRelativeDifferenceOfMeans(
   // Note that the above article also prevents an alternative calculation for a
   // confidence interval for relative differences, but the one chosen here is
   // is much simpler and passes our stochastic tests, so it seems sufficient.
+  if (a.mean === 0) {
+    // Zero baseline: the percent change is undefined (division by zero).
+    // Surface NaN so consumers can detect and render this as e.g. "n/a"
+    // rather than `Infinity` (or quietly producing wrong numbers when the
+    // variance term is also computed against `a.mean ** 4`).
+    return {mean: NaN, variance: NaN};
+  }
   return {
     mean: (b.mean - a.mean) / a.mean,
     variance:

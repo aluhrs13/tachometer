@@ -40,6 +40,11 @@ export interface Config {
   npmrc?: string;
   csvFileStats: string;
   csvFileRaw: string;
+  /**
+   * Path to write the diagnostic memory categories report to (see
+   * `--memory-categories-file`). Empty string means "don't write".
+   */
+  memoryCategoriesFile: string;
 }
 
 export async function makeConfig(opts: Opts): Promise<Config> {
@@ -52,6 +57,7 @@ export async function makeConfig(opts: Opts): Promise<Config> {
     legacyJsonFile: opts['save'],
     csvFileStats: opts['csv-file'],
     csvFileRaw: opts['csv-file-raw'],
+    memoryCategoriesFile: opts['memory-categories-file'],
     forceCleanNpmInstall: opts['force-clean-npm-install'],
     npmrc: opts['npmrc'],
     githubCheck: opts['github-check']
@@ -128,6 +134,7 @@ export async function makeConfig(opts: Opts): Promise<Config> {
 
   for (const spec of config.benchmarks) {
     let hasMemoryMeasurement = false;
+    let memoryCount = 0;
     for (const measurement of spec.measurement) {
       if (
         measurement.mode === 'performance' &&
@@ -141,6 +148,7 @@ export async function makeConfig(opts: Opts): Promise<Config> {
       }
       if (measurement.mode === 'memory') {
         hasMemoryMeasurement = true;
+        memoryCount++;
         if (!memoryInfraBrowsers.has(spec.browser.name)) {
           throw new Error(
             `Browser ${spec.browser.name} does not support memory ` +
@@ -149,6 +157,19 @@ export async function makeConfig(opts: Opts): Promise<Config> {
           );
         }
       }
+    }
+    if (memoryCount > 1) {
+      // Auto-discovery means a single memory measurement already produces
+      // one result per (processRole, allocator, attribute) tuple - there's
+      // no benefit to declaring it more than once, and the per-sample dump
+      // cache only honours the first entry's `dumpLevel`/`gcBefore`, so
+      // duplicates would silently drop settings.
+      throw new Error(
+        `Benchmark "${spec.name}" declares ${memoryCount} memory ` +
+          `measurements. Only one \`mode: "memory"\` measurement per ` +
+          `benchmark is supported - it is auto-expanded into one result ` +
+          `per allocator/attribute discovered in every process.`
+      );
     }
 
     // Ensure the trace pipeline is enabled with the memory-infra categories
@@ -184,6 +205,10 @@ export function applyDefaults(partial: Partial<Config>): Config {
     csvFileStats:
       partial.csvFileStats !== undefined ? partial.csvFileStats : '',
     csvFileRaw: partial.csvFileRaw !== undefined ? partial.csvFileRaw : '',
+    memoryCategoriesFile:
+      partial.memoryCategoriesFile !== undefined
+        ? partial.memoryCategoriesFile
+        : '',
     forceCleanNpmInstall:
       partial.forceCleanNpmInstall !== undefined
         ? partial.forceCleanNpmInstall

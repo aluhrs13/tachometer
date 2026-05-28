@@ -12,43 +12,62 @@ const precision = 5;
 
 /**
  * Format statistical results as a CSV file string.
+ *
+ * Columns: benchmark, mean min, mean max, vs benchmark, % change min,
+ * % change max, change min, change max.
+ *
+ * Each result contributes one "mean" row (with the four `vs` columns
+ * empty) plus one row per pairwise comparison against a peer in the
+ * same compareKey group. The legacy "wide" shape (one `vs <peer>`
+ * group of columns per benchmark) doesn't scale: with auto-discovered
+ * memory measurements a single run can produce tens of thousands of
+ * benchmarks, which would mean millions of columns.
  */
 export function formatCsvStats(results: ResultStatsWithDifferences[]): string {
-  // Note the examples in ./test/csv_test.ts should make this easier to
-  // understand.
   // Use the unit of the first result for the column header. If results have
   // mixed units (e.g. ms and bytes), values are still emitted unchanged with
   // their natural unit.
   const unit = (results[0]?.result.unit ?? 'ms') as 'ms' | 'bytes';
-  const h1 = ['', '', ''];
-  const h2 = ['', unit, ''];
-  const h3 = ['', 'min', 'max'];
-  const rows = [];
+  const header = [
+    'benchmark',
+    `mean min (${unit})`,
+    `mean max (${unit})`,
+    'vs benchmark',
+    '% change min',
+    '% change max',
+    `${unit} change min`,
+    `${unit} change max`,
+  ];
+  const rows: Array<Array<string>> = [];
   for (const result of results) {
-    h1.push(`vs ${result.result.name}`, '', '', '');
-    h2.push('% change', '', `${result.result.unit ?? 'ms'} change`, '');
-    h3.push('min', 'max', 'min', 'max');
-    const row = [];
-    row.push(
+    rows.push([
       result.result.name,
       result.stats.meanCI.low.toFixed(precision),
-      result.stats.meanCI.high.toFixed(precision)
+      result.stats.meanCI.high.toFixed(precision),
+      '',
+      '',
+      '',
+      '',
+      '',
+    ]);
+    // Stable order: ascending peer index.
+    const sortedDiffs = [...result.differences.entries()].sort(
+      (a, b) => a[0] - b[0]
     );
-    for (const diff of result.differences) {
-      if (diff === null) {
-        row.push('', '', '', '');
-      } else {
-        row.push(
-          (diff.relative.low * 100).toFixed(precision) + '%',
-          (diff.relative.high * 100).toFixed(precision) + '%',
-          diff.absolute.low.toFixed(precision),
-          diff.absolute.high.toFixed(precision)
-        );
-      }
+    for (const [peerIndex, diff] of sortedDiffs) {
+      rows.push([
+        result.result.name,
+        '',
+        '',
+        results[peerIndex].result.name,
+        (diff.relative.low * 100).toFixed(precision) + '%',
+        (diff.relative.high * 100).toFixed(precision) + '%',
+        diff.absolute.low.toFixed(precision),
+        diff.absolute.high.toFixed(precision),
+      ]);
     }
-    rows.push(row);
   }
-  return csvStringify([h1, h2, h3, ...rows]);
+  return csvStringify([header, ...rows]);
 }
 
 /**

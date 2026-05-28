@@ -77,8 +77,8 @@ suite('jsonOutput', () => {
             high: 11.43541,
           },
           differences: [
-            null,
             {
+              against: 1,
               absolute: {
                 low: -12.02998,
                 high: -7.97002,
@@ -113,6 +113,7 @@ suite('jsonOutput', () => {
           },
           differences: [
             {
+              against: 0,
               absolute: {
                 low: 7.97002,
                 high: 12.02998,
@@ -122,7 +123,6 @@ suite('jsonOutput', () => {
                 high: 132.09676,
               },
             },
-            null,
           ],
         },
       ],
@@ -174,16 +174,18 @@ suite('jsonOutput', () => {
           samples: [...new Array(25).fill(5), ...new Array(25).fill(15)],
           mean: {low: 8.56459, high: 11.43541},
           differences: [
-            null,
             {
+              against: 1,
               absolute: {high: 2.02998, low: -2.02998},
               percentChange: {high: 20.29978, low: -20.29978},
             },
             {
+              against: 2,
               absolute: {low: -12.02998, high: -7.97002},
               percentChange: {low: -58.02419, high: -41.97581},
             },
             {
+              against: 3,
               absolute: {high: -7.97002, low: -12.02998},
               percentChange: {high: -41.97581, low: -58.02419},
             },
@@ -209,15 +211,17 @@ suite('jsonOutput', () => {
           mean: {high: 11.43541, low: 8.56459},
           differences: [
             {
+              against: 0,
               absolute: {high: 2.02998, low: -2.02998},
               percentChange: {high: 20.29978, low: -20.29978},
             },
-            null,
             {
+              against: 2,
               absolute: {high: -7.97002, low: -12.02998},
               percentChange: {high: -41.97581, low: -58.02419},
             },
             {
+              against: 3,
               absolute: {high: -7.97002, low: -12.02998},
               percentChange: {high: -41.97581, low: -58.02419},
             },
@@ -243,15 +247,17 @@ suite('jsonOutput', () => {
           mean: {low: 18.56459, high: 21.43541},
           differences: [
             {
+              against: 0,
               absolute: {low: 7.97002, high: 12.02998},
               percentChange: {low: 67.90324, high: 132.09676},
             },
             {
+              against: 1,
               absolute: {high: 12.02998, low: 7.97002},
               percentChange: {high: 132.09676, low: 67.90324},
             },
-            null,
             {
+              against: 3,
               absolute: {high: 2.02998, low: -2.02998},
               percentChange: {high: 10.14989, low: -10.14989},
             },
@@ -277,18 +283,20 @@ suite('jsonOutput', () => {
           mean: {low: 18.56459, high: 21.43541},
           differences: [
             {
+              against: 0,
               absolute: {high: 12.02998, low: 7.97002},
               percentChange: {high: 132.09676, low: 67.90324},
             },
             {
+              against: 1,
               absolute: {high: 12.02998, low: 7.97002},
               percentChange: {high: 132.09676, low: 67.90324},
             },
             {
+              against: 2,
               absolute: {high: 2.02998, low: -2.02998},
               percentChange: {high: 10.14989, low: -10.14989},
             },
-            null,
           ],
         },
       ],

@@ -45,6 +45,7 @@ suite('makeConfig', function () {
       legacyJsonFile: '',
       csvFileStats: '',
       csvFileRaw: '',
+      memoryCategoriesFile: '',
       githubCheck: undefined,
       benchmarks: [
         {
@@ -90,6 +91,7 @@ suite('makeConfig', function () {
       legacyJsonFile: '',
       csvFileStats: '',
       csvFileRaw: '',
+      memoryCategoriesFile: '',
       // TODO(aomarks) Be consistent about undefined vs unset.
       githubCheck: undefined,
       benchmarks: [
@@ -136,6 +138,7 @@ suite('makeConfig', function () {
       legacyJsonFile: '',
       csvFileStats: '',
       csvFileRaw: '',
+      memoryCategoriesFile: '',
       githubCheck: undefined,
       benchmarks: [
         {
@@ -178,6 +181,7 @@ suite('makeConfig', function () {
       npmrc: '',
       csvFileStats: 'stats.csv',
       csvFileRaw: 'raw.csv',
+      memoryCategoriesFile: '',
       jsonFile: 'out.json',
       legacyJsonFile: '',
       forceCleanNpmInstall: true,
@@ -225,6 +229,7 @@ suite('makeConfig', function () {
       npmrc: '',
       csvFileStats: '',
       csvFileRaw: '',
+      memoryCategoriesFile: '',
       jsonFile: '',
       legacyJsonFile: '',
       forceCleanNpmInstall: false,

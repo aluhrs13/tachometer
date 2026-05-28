@@ -150,13 +150,25 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
     defaultValue: '',
   },
   {
+    name: 'memory-categories-file',
+    description:
+      'When `--measure=memory` is in use, save a diagnostic JSON to ' +
+      'this path describing what the probe phase discovered, what ' +
+      'each `categories` rule did, and what was dropped. Lets you ' +
+      'iterate on your memory `categories` config without re-running ' +
+      'and guessing.',
+    type: String,
+    defaultValue: '',
+  },
+  {
     name: 'measure',
     description:
       'Which time interval to measure. Options:\n' +
       '* callback: call bench.start() and bench.stop() (default)\n' +
       '*   global: set window.tachometerResult = <milliseconds>\n' +
       '*      fcp: first contentful paint\n' +
-      '*   memory: Chromium memory-infra memory dump',
+      '*   memory: Chromium memory-infra dump (auto-discovers every\n' +
+      '             allocator/attribute across every process)',
     type: (str: string): string => {
       if (!measurements.has(str)) {
         throw new Error(
@@ -237,22 +249,6 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
     defaultValue: defaults.traceCategories.join(','),
   },
   {
-    name: 'memory-metric',
-    description:
-      'Dotted memory-infra path to extract from the dump ' +
-      `(default ${defaults.memoryDefaultMetric}). ` +
-      'Only valid when --measure=memory.',
-    type: String,
-  },
-  {
-    name: 'memory-process',
-    description:
-      'Which Chromium process to read the memory metric from ' +
-      `(renderer|browser|gpu|all, default ${defaults.memoryDefaultProcess}). ` +
-      'Only valid when --measure=memory.',
-    type: String,
-  },
-  {
     name: 'memory-dump-level',
     description:
       `Memory dump level of detail (light|detailed, default ${defaults.memoryDefaultDumpLevel}). ` +
@@ -267,6 +263,16 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
       'Only valid when --measure=memory.',
     type: booleanString('memory-gc-before-dump'),
     typeLabel: 'true|false',
+  },
+  {
+    name: 'memory-max-allocator-depth',
+    description:
+      'Maximum allocator-path depth to enumerate (default unlimited). ' +
+      'For example `2` collapses ' +
+      '`malloc/partitions/allocator/buckets/bucket_*` rows into the ' +
+      '`malloc/partitions` parent, typically reducing the result table ' +
+      'by 50x. Only valid when --measure=memory.',
+    type: Number,
   },
 ];
 
@@ -295,14 +301,14 @@ export interface Opts {
   npmrc?: string;
   'csv-file': string;
   'csv-file-raw': string;
+  'memory-categories-file': string;
   'json-file': string;
   trace: boolean;
   'trace-log-dir': string;
   'trace-cat': string;
-  'memory-metric': string | undefined;
-  'memory-process': string | undefined;
   'memory-dump-level': string | undefined;
   'memory-gc-before-dump': boolean | undefined;
+  'memory-max-allocator-depth': number | undefined;
 
   // Extra arguments not associated with a flag are put here. These are our
   // benchmark names/URLs.

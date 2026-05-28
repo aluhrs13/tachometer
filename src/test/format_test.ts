@@ -216,12 +216,12 @@ suite('format', () => {
         {
           name: 'foo',
           url: 'mybench/index.html',
-          measurement: [{mode: 'memory', metric: 'malloc.size'}],
+          measurement: [{mode: 'memory'}],
         },
         {
           name: 'bar',
           url: 'mybench/index.html',
-          measurement: [{mode: 'memory', metric: 'malloc.size'}],
+          measurement: [{mode: 'memory'}],
         },
       ],
     };
