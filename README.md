@@ -362,9 +362,15 @@ Tachometer tracks only the **bytes**-focused subset by default:
 - `effective_size` — bytes attributed after sharing is split across
   owners (the "fair share" view of memory).
 - `process_totals.peak_resident_set_size`,
-  `process_totals.private_footprint_bytes`,
-  `process_totals.resident_set_bytes` — process-level RSS-style
-  attributes on the platforms that report them.
+  `process_totals.private_footprint_bytes` — process-level RSS-style
+  attributes (in bytes) on the platforms that report them. In current
+  Chromium these are the only `process_totals` attributes exposed via
+  the `Tracing.requestMemoryDump` trace path. `resident_set_bytes` is
+  also tracked for forward/cross-browser compatibility, but Chromium
+  does not currently emit it under `process_totals` in the trace (the
+  non-peak resident-set value is only available through a separate
+  memory-instrumentation API that tachometer does not use), so it
+  normally does not appear in results.
 
 Everything else is dropped during enumeration. This is hard-coded
 because the dropped attributes don't answer a memory-cost question;
@@ -383,7 +389,8 @@ that one dump.
 **Result rows.** Each row is labelled
 `<bench> [memory:<processRole>:<allocator>.<attribute>]`. Process roles
 come straight from Chromium's `process_name` metadata, lowercased (e.g.
-`renderer`, `browser`, `gpu process`, `utility: network service`). When
+`renderer`, `browser`, `gpu process`, `service:
+network.mojom.networkservice`). When
 multiple processes share the same role (e.g. several renderers),
 tachometer sums their values for that tuple. A category that is present
 in one variant but missing in another is recorded as `0` for the missing

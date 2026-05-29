@@ -372,10 +372,19 @@ function hasInstanceIdentifierSegment(allocator: string): boolean {
  * - `size`: the primary "bytes allocated for this dump" metric that
  *   every named allocator reports.
  * - `effective_size`: bytes attributed after sharing is split across
- *   owners (the "fair share" view of memory).
- * - `peak_resident_set_size`, `private_footprint_bytes`,
- *   `resident_set_bytes`: process-level RSS-style attributes reported
- *   under `process_totals` on Chromium's supported platforms.
+ *   owners (the "fair share" view of memory). Computed by Chromium's
+ *   memory-dump graph processor during JSON export, so it appears in
+ *   the per-process dump events for nodes that participate in sharing.
+ * - `peak_resident_set_size`, `private_footprint_bytes`: process-level
+ *   RSS-style attributes (in bytes) reported under `process_totals` on
+ *   Chromium's supported platforms.
+ * - `resident_set_bytes`: also tracked for forward/cross-browser
+ *   compatibility, but current Chromium does NOT emit it under
+ *   `process_totals` in the `Tracing.requestMemoryDump` trace path (the
+ *   non-peak resident-set value is only exposed through a separate
+ *   memory-instrumentation query API that tachometer does not use). It
+ *   is harmless to keep in the tracked set: enumeration simply never
+ *   discovers it from a live dump.
  */
 /**
  * The set of memory-infra dump attributes tachometer tracks, exposed
