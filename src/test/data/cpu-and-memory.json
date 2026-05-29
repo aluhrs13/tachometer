@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Polymer/tachometer/master/config.schema.json",
+  "sampleSize": 10,
+  "timeout": 0,
+  "benchmarks": [
+    {
+      "name": "cpu-and-memory",
+      "url": "random-global.html",
+      "measurement": [
+        {
+          "mode": "callback"
+        },
+        {
+          "mode": "cpu"
+        },
+        {
+          "mode": "memory",
+          "dumpLevel": "light",
+          "gcBefore": true
+        }
+      ],
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      }
+    }
+  ]
+}

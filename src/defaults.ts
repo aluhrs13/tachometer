@@ -255,6 +255,33 @@ export const memoryDefaultCategories: ReadonlyArray<CategoryRule> = [
   },
 ];
 
+/**
+ * The curated set of CDP `Performance.getMetrics` metrics tachometer
+ * reports for every `mode: "cpu"` measurement, in display order. Each
+ * becomes its own result row (`cpu:mainThread:<metric>`) reporting
+ * **main renderer-thread CPU time** in milliseconds.
+ *
+ * These metrics are emitted unconditionally by Chromium's
+ * `InspectorPerformanceAgent` whenever `Performance.enable` succeeds, so
+ * static expansion is safe: if `timeDomain: 'threadTicks'` is
+ * unsupported on the platform, `Performance.enable` itself fails (and we
+ * surface a clear error) rather than silently omitting metrics.
+ *
+ * Note the metrics overlap and are NOT additive:
+ * `TaskDuration` is the total, and `ScriptDuration`,
+ * `RecalcStyleDuration`, `LayoutDuration`, and `V8CompileDuration` are
+ * non-overlapping slices of it. `TaskOtherDuration` is intentionally
+ * excluded because it absorbs tachometer's own DevTools/polling
+ * overhead and is therefore harness-sensitive.
+ */
+export const cpuDefaultMetrics: ReadonlyArray<string> = [
+  'TaskDuration',
+  'ScriptDuration',
+  'RecalcStyleDuration',
+  'LayoutDuration',
+  'V8CompileDuration',
+];
+
 export function measurement(url: LocalUrl | RemoteUrl): Measurement {
   if (url.kind === 'remote') {
     return {

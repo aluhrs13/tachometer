@@ -202,9 +202,9 @@ likely that the condition will never be met, and the timeout will expire.
 
 ## Measurement modes
 
-Tachometer supports five modes of measurement (four for time, one for memory),
-controlled with the `measurement` config file property, or the `--measure`
-flag.
+Tachometer supports six modes of measurement (four for time, one for memory,
+one for CPU), controlled with the `measurement` config file property, or the
+`--measure` flag.
 
 If `measurement` is an array, then all of the given measurements will be
 retrieved from each page load. Each measurement from a page is treated as its
@@ -474,6 +474,73 @@ report describing what the run actually did. The file has:
 The file is tiny (kilobytes) and written every time the flag is
 set; you can check one in next to a benchmark config and diff across
 runs to spot Chromium emission changes.
+
+#### CPU time (Chromium)
+
+When the `--measure` flag is set to **`cpu`**, or when a config-file
+measurement object has `"mode": "cpu"`, tachometer measures **main-thread
+renderer CPU time** using the Chrome DevTools Protocol
+`Performance.getMetrics` API (enabled in `threadTicks` time domain). Like
+memory, this is **Chromium-only** (chrome / edge).
+
+```json
+{
+  "benchmarks": [
+    {
+      "url": "my-benchmark.html",
+      "measurement": ["callback", "cpu"]
+    }
+  ]
+}
+```
+
+CPU is a **companion** metric: it has no completion signal of its own, so it
+snapshots its value whenever a paired timing measurement (`callback`, `fcp`,
+or a `global`/expression poll) finishes. A `cpu` measurement therefore
+requires at least one timing measurement in the same benchmark:
+
+- `--measure=cpu` on the CLI automatically expands to
+  `[<the url's default timing measurement>, cpu]`.
+- A bare `"measurement": "cpu"` (or `["cpu"]`) in a config file has the
+  url-appropriate default timing measurement injected ahead of it.
+- Otherwise list them explicitly, e.g. `"measurement": ["callback", "cpu"]`.
+
+The reported value for each sample is the **delta** between two cumulative
+counter snapshots: a baseline taken right after navigation, and an end
+snapshot taken when the timing companion completes. CPU is most meaningful
+with a **`callback`** companion, which fires when your benchmark signals it
+is done — `fcp` fires before the page finishes loading, leaving a near-empty
+measurement window.
+
+A single `cpu` measurement auto-expands into one result row per discovered
+sub-metric, each statistically compared independently:
+
+- `cpu:mainThread:TaskDuration` — total main-thread task time.
+- `cpu:mainThread:ScriptDuration` — time running JavaScript.
+- `cpu:mainThread:RecalcStyleDuration` — style recalculation.
+- `cpu:mainThread:LayoutDuration` — layout.
+- `cpu:mainThread:V8CompileDuration` — V8 compilation.
+
+(The exact set is the intersection of the curated `cpuDefaultMetrics` list in
+[`src/defaults.ts`](./src/defaults.ts) with what the running Chromium build
+emits.)
+
+Caveats:
+
+- **Main-thread renderer only.** Web/Service Workers, the compositor and
+  raster threads, GPU process, network service, and browser process are all
+  excluded.
+- **Sub-metrics overlap and are NOT additive.** `ScriptDuration`,
+  `LayoutDuration`, etc. are slices that can nest inside `TaskDuration`;
+  don't sum them.
+- **Unit is `ms`.** CPU rows share the `ms` unit (and `+1ms`-style auto-sample
+  conditions) with wall-clock results, but their `cpu:mainThread:` compare key
+  keeps them from being compared against wall-clock timing rows.
+- **Cannot be combined with `memory`** in the same benchmark: the memory dump
+  and its forced garbage collection consume main-thread CPU and would
+  contaminate the measurement. Measure them in separate runs.
+
+Equivalent CLI flag: `--measure=cpu`.
 
 ## Interpreting results
 
@@ -1039,7 +1106,7 @@ tach http://example.com
 | `--sample-size` / `-n`      | `50`                                    | Minimum number of times to run each benchmark ([details](#minimum-sample-size))                                                                                    |
 | `--auto-sample-conditions`  | `0%`                                    | The degrees of difference to try and resolve when auto-sampling ("N%" or "Nms", comma-delimited) ([details](#auto-sample-conditions))                              |
 | `--timeout`                 | `3`                                     | The maximum number of minutes to spend auto-sampling ([details](#auto-sample))                                                                                     |
-| `--measure`                 | `callback`                              | Which measurement to take (`callback`, `global`, `fcp`, `memory`) ([details](#measurement-modes))                                                                  |
+| `--measure`                 | `callback`                              | Which measurement to take (`callback`, `global`, `fcp`, `memory`, `cpu`) ([details](#measurement-modes))                                                           |
 | `--measurement-expression`  | `window.tachometerResult`               | JS expression to poll for on page to retrieve measurement result when `measure` setting is set to `global`                                                         |
 | `--memory-dump-level`       | `detailed`                              | When `--measure=memory`, dump level of detail (`light` or `detailed`).                                                                                             |
 | `--memory-gc-before-dump`   | `true`                                  | When `--measure=memory`, whether to force a garbage collection before the dump.                                                                                    |

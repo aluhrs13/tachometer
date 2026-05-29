@@ -19,6 +19,9 @@ import {
 import {
   categoryTupleId,
   compileGlob,
+  cpuCompareKey,
+  enableCpuMetrics,
+  captureCpuMetrics,
   measure,
   measurementName,
   memoryAggregateCompareKey,
@@ -26,8 +29,13 @@ import {
   probeMemoryCategories,
   TRACKED_ATTRIBUTES_LIST,
 } from './measure.js';
-import type {MemoryDumpCache, MemoryDumpCategory} from './measure.js';
+import type {
+  CpuMetricsCache,
+  MemoryDumpCache,
+  MemoryDumpCategory,
+} from './measure.js';
 import {
+  cpuDefaultMetrics,
   memoryDefaultCategories,
   memoryDefaultMaxAllocatorDepth,
 } from './defaults.js';
@@ -38,8 +46,11 @@ import {
   CategoryExcludeRule,
   CategoryIncludeRule,
   CategoryRule,
+  isTimingMeasurement,
+  isUnresolvedCpuMeasurement,
   isUnresolvedMemoryMeasurement,
   MemoryMeasurement,
+  ResolvedCpuMeasurement,
   ResolvedMemoryMeasurement,
   unitForMeasurement,
 } from './types.js';
@@ -127,6 +138,7 @@ export class Runner {
     }
     console.log('Running benchmarks\n');
     await this.probeMemoryAndExpand();
+    this.expandCpuMeasurements();
     await this.warmup();
     await this.takeMinimumSamples();
     await this.takeAdditionalSamples();
@@ -150,6 +162,41 @@ export class Runner {
    * unresolved memory measurement ever reaches the per-sample collection
    * loop in {@link takeSamples}.
    */
+  /**
+   * Statically expand every unresolved `mode:'cpu'` measurement into one
+   * {@link ResolvedCpuMeasurement} per metric in {@link cpuDefaultMetrics},
+   * rewriting each spec's `measurement` array **in place** (preserving the
+   * spec object identity that keys the `results` map, mirroring
+   * {@link probeMemoryAndExpand}).
+   *
+   * Unlike memory, no page load / probe is needed: the curated CPU metrics
+   * are always emitted by Chromium's performance agent once
+   * `Performance.enable` succeeds, so the metric set is known statically.
+   * Each expanded entry carries its `compareKey` so the stats engine only
+   * compares a metric against the same metric across variants.
+   */
+  private expandCpuMeasurements() {
+    for (const spec of this.specs) {
+      for (let i = 0; i < spec.measurement.length; i++) {
+        const unresolved = spec.measurement[i];
+        if (!isUnresolvedCpuMeasurement(unresolved)) {
+          continue;
+        }
+        const expanded: ResolvedCpuMeasurement[] = cpuDefaultMetrics.map(
+          (metric) => ({
+            mode: 'cpu',
+            metric,
+            name: unresolved.name,
+            compareKey: cpuCompareKey({mode: 'cpu', metric}),
+          })
+        );
+        spec.measurement.splice(i, 1, ...expanded);
+        // Skip past the entries we just inserted.
+        i += expanded.length - 1;
+      }
+    }
+  }
+
   private async probeMemoryAndExpand() {
     const {specs, servers, browsers, config} = this;
 
@@ -498,6 +545,14 @@ export class Runner {
     // Tracing.requestMemoryDump is issued per sample even if the spec asks
     // for multiple memory metrics (one dump contains every allocator).
     let memoryDumpCache: MemoryDumpCache = {};
+    // Shared between all cpu measurements in this attempt. The baseline is
+    // captured once after navigation and the end snapshot once after the
+    // timing companion(s) complete; every per-metric cpu row reads its
+    // delta from this one pair of snapshots.
+    let cpuMetricsCache: CpuMetricsCache = {};
+    // Whether this spec has any cpu measurement, gating the per-attempt
+    // Performance.enable + baseline capture.
+    const hasCpu = spec.measurement.some((m) => m.mode === 'cpu');
 
     // We'll try N attempts per page. Within each attempt, we'll try to collect
     // all of the measurements by polling. If we hit our per-attempt timeout
@@ -510,8 +565,20 @@ export class Runner {
       measurementResults = [];
       consumedPerfLog = writeTraceLogs ? [] : undefined;
       memoryDumpCache = {};
+      cpuMetricsCache = {};
       await openAndSwitchToNewTab(driver, spec.browser);
       await driver.get(url);
+      if (hasCpu) {
+        // Enable CPU-time metrics and capture the baseline counter
+        // snapshot. We do this *after* navigation: an about:blank -> page
+        // navigation can swap the renderer process (resetting the
+        // cumulative counters), so post-navigation is the only point we
+        // know we're on the final renderer. `enableCpuMetrics` throws on
+        // platforms where thread-time metrics are unsupported - that fires
+        // here on the first attempt, failing the run fast and clearly.
+        await enableCpuMetrics(driver);
+        cpuMetricsCache.baseline = await captureCpuMetrics(driver);
+      }
       for (
         let waited = 0;
         pendingMeasurements.size > 0 && waited <= this.attemptTimeout;
@@ -519,26 +586,69 @@ export class Runner {
       ) {
         // TODO(aomarks) You don't have to wait in callback mode!
         await wait(this.pollTime);
+        // Pass 1: every non-cpu measurement (timing + memory). These define
+        // their own completion; cpu is a companion that snapshots only once
+        // they're done.
         for (
           let measurementIndex = 0;
           measurementIndex < spec.measurement.length;
           measurementIndex++
         ) {
+          const measurement = spec.measurement[measurementIndex];
+          if (measurement.mode === 'cpu') {
+            continue;
+          }
           if (measurementResults[measurementIndex] !== undefined) {
             // Already collected this measurement on this attempt.
             continue;
           }
-          const measurement = spec.measurement[measurementIndex];
           const result = await measure(
             driver,
             measurement,
             server,
             consumedPerfLog,
-            memoryDumpCache
+            memoryDumpCache,
+            cpuMetricsCache
           );
           if (result !== undefined) {
             measurementResults[measurementIndex] = result;
             pendingMeasurements.delete(measurement);
+          }
+        }
+        // Pass 2: cpu measurements, but only once no *timing* measurement is
+        // still pending. This guarantees the cpu `end` snapshot is taken on
+        // the same poll tick the timing companion resolves, regardless of
+        // the order measurements appear in the array. (Memory measurements
+        // are not part of this gate, and a cpu spec is validated to never
+        // contain a memory measurement.)
+        const timingPending = [...pendingMeasurements].some(
+          isTimingMeasurement
+        );
+        if (!timingPending) {
+          for (
+            let measurementIndex = 0;
+            measurementIndex < spec.measurement.length;
+            measurementIndex++
+          ) {
+            const measurement = spec.measurement[measurementIndex];
+            if (measurement.mode !== 'cpu') {
+              continue;
+            }
+            if (measurementResults[measurementIndex] !== undefined) {
+              continue;
+            }
+            const result = await measure(
+              driver,
+              measurement,
+              server,
+              consumedPerfLog,
+              memoryDumpCache,
+              cpuMetricsCache
+            );
+            if (result !== undefined) {
+              measurementResults[measurementIndex] = result;
+              pendingMeasurements.delete(measurement);
+            }
           }
         }
       }

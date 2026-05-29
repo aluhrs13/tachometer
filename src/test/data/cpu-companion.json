@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Polymer/tachometer/master/config.schema.json",
+  "sampleSize": 10,
+  "timeout": 0,
+  "benchmarks": [
+    {
+      "name": "cpu-companion",
+      "url": "random-global.html",
+      "measurement": "cpu",
+      "browser": {
+        "name": "chrome",
+        "headless": true
+      }
+    }
+  ]
+}
