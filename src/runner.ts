@@ -109,7 +109,7 @@ export class Runner {
    * Maximum milliseconds we will wait for all measurements to be collected per
    * attempt before reloading and trying a new attempt.
    */
-  private readonly attemptTimeout = 10000;
+  private readonly attemptTimeout = 30000;
 
   /**
    * How many milliseconds we will wait between each poll for measurements.
@@ -591,11 +591,12 @@ export class Runner {
         cpuMetricsCache.baseline = await captureCpuMetrics(driver);
       }
       await driver.get(url);
-      for (
-        let waited = 0;
-        pendingMeasurements.size > 0 && waited <= this.attemptTimeout;
-        waited += this.pollTime
-      ) {
+      // Use a real wall-clock deadline rather than counting poll iterations.
+      // The per-poll work (e.g. memory dumps vs. lightweight cpu/timing
+      // queries) varies in cost, so a fixed iteration count would translate to
+      // wildly different real-time deadlines depending on measurement mode.
+      const attemptDeadline = Date.now() + this.attemptTimeout;
+      while (pendingMeasurements.size > 0 && Date.now() <= attemptDeadline) {
         // TODO(aomarks) You don't have to wait in callback mode!
         await wait(this.pollTime);
         // Pass 1: every non-cpu measurement (timing + memory). These define
