@@ -37,9 +37,7 @@ export const traceCategories = [
  * Tracing categories that must be enabled for Chromium's memory-infra
  * subsystem to emit memory dump events.
  */
-export const memoryTraceCategories = [
-  'disabled-by-default-memory-infra',
-];
+export const memoryTraceCategories = ['disabled-by-default-memory-infra'];
 
 /**
  * Default dump level of detail requested via `Tracing.requestMemoryDump`.

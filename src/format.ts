@@ -361,7 +361,10 @@ function valueFormatterFor(r: ResultStats): (n: number) => string {
   return (r.result.unit ?? 'ms') === 'bytes' ? bytes : milli;
 }
 
-function formatDifference({absolute, relative}: Difference, r: ResultStats): string {
+function formatDifference(
+  {absolute, relative}: Difference,
+  r: ResultStats
+): string {
   const fmtAbs = valueFormatterFor(r);
   const isBytes = (r.result.unit ?? 'ms') === 'bytes';
   const worseWord = isBytes ? 'more' : 'slower';

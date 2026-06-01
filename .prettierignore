@@ -1,5 +1,4 @@
 /lib/
 /client/lib/
-/src/test/data/logs/
-/src/test/data/invalid-js.js
+/src/test/data/
 /config.schema.json

@@ -226,7 +226,10 @@ export function computeDifferences(
         // computeDifference(j, i) - matching the original semantics where
         // `differences[j]` on result i held
         // computeDifference(stats[j].stats, stats[i].stats).
-        out[i].differences.set(j, computeDifference(stats[j].stats, stats[i].stats));
+        out[i].differences.set(
+          j,
+          computeDifference(stats[j].stats, stats[i].stats)
+        );
       }
     }
   }

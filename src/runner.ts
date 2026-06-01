@@ -269,9 +269,11 @@ export class Runner {
       rules: bakedCategories,
       apply: applyResult,
       maxAllocatorDepth:
-        (probeTargets[0]?.spec.measurement[probeTargets[0].memoryIndex] as
-          | MemoryMeasurement
-          | undefined)?.maxAllocatorDepth ?? memoryDefaultMaxAllocatorDepth,
+        (
+          probeTargets[0]?.spec.measurement[probeTargets[0].memoryIndex] as
+            | MemoryMeasurement
+            | undefined
+        )?.maxAllocatorDepth ?? memoryDefaultMaxAllocatorDepth,
       trackedAttributes: [...TRACKED_ATTRIBUTES_LIST],
     });
 

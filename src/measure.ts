@@ -400,7 +400,9 @@ export const TRACKED_ATTRIBUTES_LIST: ReadonlyArray<string> = [
   'resident_set_bytes',
 ];
 
-const TRACKED_ATTRIBUTES: ReadonlySet<string> = new Set(TRACKED_ATTRIBUTES_LIST);
+const TRACKED_ATTRIBUTES: ReadonlySet<string> = new Set(
+  TRACKED_ATTRIBUTES_LIST
+);
 
 /**
  * Enumerate every `(processRole, allocator, attribute)` tuple present in
@@ -510,7 +512,7 @@ async function drainPerformanceLog(
 ): Promise<webdriver.logging.Entry[]> {
   let all: webdriver.logging.Entry[] = [];
   // Loop until we get back an empty chunk to ensure we have everything.
-   
+
   while (true) {
     const chunk = await driver.manage().logs().get('performance');
     if (chunk.length === 0) {
@@ -1058,7 +1060,10 @@ export function measurementName(measurement: RuntimeMeasurement): string {
   // a consistent `memory:sum:<name>` label that mirrors the
   // `memory:tuple:` format used for resolved memory rows. Check before
   // the generic `measurement.name` fallback below.
-  if (measurement.mode === 'memory' && isAggregatedMemoryMeasurement(measurement)) {
+  if (
+    measurement.mode === 'memory' &&
+    isAggregatedMemoryMeasurement(measurement)
+  ) {
     return `memory:sum:${measurement.sumAs}`;
   }
   if (measurement.name) {

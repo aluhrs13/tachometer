@@ -111,7 +111,10 @@ suite('measure', () => {
         allocator: 'v8/main/heap',
         attribute: 'size',
       };
-      assert.equal(measurementName(m), 'memory:tuple:renderer:v8/main/heap.size');
+      assert.equal(
+        measurementName(m),
+        'memory:tuple:renderer:v8/main/heap.size'
+      );
     });
 
     test('explicit name wins over auto-derived label', () => {
@@ -184,7 +187,9 @@ suite('measure', () => {
       const rx = compileGlob('*:malloc.size');
       assert.isTrue(rx.test('renderer:malloc.size'));
       assert.isTrue(rx.test('browser:malloc.size'));
-      assert.isTrue(rx.test('service: network.mojom.networkservice:malloc.size'));
+      assert.isTrue(
+        rx.test('service: network.mojom.networkservice:malloc.size')
+      );
       assert.isFalse(rx.test('renderer:malloc.effective_size'));
       assert.isFalse(rx.test('renderer:malloc/partitions.size'));
     });
@@ -409,8 +414,9 @@ suite('measure', () => {
           'gpu/discardable_cache/cache_0x7fff12345abc': {size: '50'},
           'gpu/shared_images/client_0x1': {size: '25'},
           'media/webmediaplayer/player_0x12abcd34': {size: '10'},
-          'gpu/shared_images/client_0x1/mailbox_00:4F:65:5D:FE:DD:46:8C':
-            {size: '7'},
+          'gpu/shared_images/client_0x1/mailbox_00:4F:65:5D:FE:DD:46:8C': {
+            size: '7',
+          },
           'shared_memory/001428541A9D22AAAB91F7EC8E552D81': {size: '8'},
           'blink_gc/main/allocated_objects': {size: '500'},
           'blink_gc/main/allocated_objects/__1007c21d112fe171': {size: '3'},

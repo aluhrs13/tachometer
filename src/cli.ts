@@ -31,7 +31,6 @@ import {createRequire} from 'module';
 const require = createRequire(import.meta.url);
 
 const installedVersion = (): string =>
-   
   require(path.join('..', 'package.json')).version;
 
 export async function main(

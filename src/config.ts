@@ -321,10 +321,10 @@ export function parseAutoSampleConditions(
         unit === 'B'
           ? 1
           : unit === 'KiB'
-          ? 1024
-          : unit === 'MiB'
-          ? 1024 * 1024
-          : 1024 * 1024 * 1024;
+            ? 1024
+            : unit === 'MiB'
+              ? 1024 * 1024
+              : 1024 * 1024 * 1024;
       num = raw * multiplier;
       absOrRel = absoluteBytes;
     }

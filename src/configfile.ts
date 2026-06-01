@@ -335,7 +335,6 @@ export async function parseConfigFile(
   parsedJson: unknown,
   configFilePath: string
 ): Promise<Partial<Config>> {
-   
   const schema = require('../config.schema.json');
   const result = jsonschema.validate(parsedJson, schema);
   if (result.errors.length > 0) {
@@ -554,8 +553,8 @@ function parseBrowserObject(config: BrowserConfigs): BrowserConfig {
           config.trace.logDir === undefined
             ? defaults.traceLogDir
             : path.isAbsolute(config.trace.logDir)
-            ? config.trace.logDir
-            : path.join(process.cwd(), config.trace.logDir),
+              ? config.trace.logDir
+              : path.join(process.cwd(), config.trace.logDir),
         writeLogs: true,
       };
     }

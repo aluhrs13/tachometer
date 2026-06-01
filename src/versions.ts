@@ -285,12 +285,9 @@ export function hashStrings(...strings: string[]) {
     .digest('hex');
 }
 
- 
-export const tachometerVersion = require(path.join(
-  __dirname,
-  '..',
-  'package.json'
-)).version;
+export const tachometerVersion = require(
+  path.join(__dirname, '..', 'package.json')
+).version;
 
 /**
  * Name of special file used to indicate that an NPM or git install directory

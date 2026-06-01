@@ -134,10 +134,26 @@ suite('computeDifferences', () => {
     // Two variants of a malloc-size category and two variants of a v8-heap-size
     // category. Cross-category comparisons should be suppressed even though
     // the units match.
-    const aMalloc = makeMemResult([100, 110, 120], 'memory:r:malloc.size', 'a-malloc');
-    const bMalloc = makeMemResult([200, 210, 220], 'memory:r:malloc.size', 'b-malloc');
-    const aV8 = makeMemResult([300, 310, 320], 'memory:r:v8/main/heap.size', 'a-v8');
-    const bV8 = makeMemResult([400, 410, 420], 'memory:r:v8/main/heap.size', 'b-v8');
+    const aMalloc = makeMemResult(
+      [100, 110, 120],
+      'memory:r:malloc.size',
+      'a-malloc'
+    );
+    const bMalloc = makeMemResult(
+      [200, 210, 220],
+      'memory:r:malloc.size',
+      'b-malloc'
+    );
+    const aV8 = makeMemResult(
+      [300, 310, 320],
+      'memory:r:v8/main/heap.size',
+      'a-v8'
+    );
+    const bV8 = makeMemResult(
+      [400, 410, 420],
+      'memory:r:v8/main/heap.size',
+      'b-v8'
+    );
     const out = computeDifferences([
       aMalloc as Parameters<typeof computeDifferences>[0][0],
       bMalloc as Parameters<typeof computeDifferences>[0][0],
