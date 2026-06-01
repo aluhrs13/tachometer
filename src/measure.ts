@@ -243,7 +243,16 @@ interface ProcessMetadataEvent {
 }
 
 interface WebDriverWithSendDevToolsCommand {
+  // Fire-and-forget CDP send. Selenium resolves this to `void`/`null` even
+  // for commands that return a payload, so it must only be used for commands
+  // whose result we don't need (e.g. Performance.enable, Tracing.*).
   sendDevToolsCommand?: (command: string, params: unknown) => Promise<unknown>;
+  // CDP send that resolves to the command's actual return value. Required for
+  // value-returning commands such as Performance.getMetrics.
+  sendAndGetDevToolsCommand?: (
+    command: string,
+    params: unknown
+  ) => Promise<unknown>;
 }
 
 /**
@@ -1191,7 +1200,10 @@ const CPU_DELTA_EPSILON_S = 1e-6;
  * the run fails fast rather than silently reporting wall-clock numbers.
  *
  * Must be called once per attempt, after the tab is open (tabs are
- * closed and reopened each attempt), before the baseline snapshot.
+ * closed and reopened each attempt) but *before* navigating to the page,
+ * so the baseline snapshot taken immediately after is ~zero and the page's
+ * load-time CPU is counted. The threadTicks domain carries across the
+ * about:blank -> page navigation.
  */
 export async function enableCpuMetrics(
   driver: webdriver.WebDriver,
@@ -1242,10 +1254,11 @@ export async function captureCpuMetrics(
   options: {devtoolsTimeoutMs?: number} = {}
 ): Promise<Map<string, number> | undefined> {
   const driverWithCdp = driver as unknown as WebDriverWithSendDevToolsCommand;
-  if (!driverWithCdp.sendDevToolsCommand) {
+  if (!driverWithCdp.sendAndGetDevToolsCommand) {
     throw new Error(
       'CPU measurement requires a Chromium-based browser ' +
-        '(chrome or edge); this WebDriver does not expose sendDevToolsCommand.'
+        '(chrome or edge); this WebDriver does not expose ' +
+        'sendAndGetDevToolsCommand.'
     );
   }
   const devtoolsTimeoutMs =
@@ -1253,13 +1266,21 @@ export async function captureCpuMetrics(
   let resultOrTimeout: unknown;
   try {
     resultOrTimeout = await withTimeout(
-      driverWithCdp.sendDevToolsCommand('Performance.getMetrics', {}),
+      driverWithCdp.sendAndGetDevToolsCommand('Performance.getMetrics', {}),
       devtoolsTimeoutMs
     );
   } catch {
     return undefined;
   }
-  if (resultOrTimeout === 'timeout' || resultOrTimeout === undefined) {
+  // `sendAndGetDevToolsCommand` returns the CDP payload, but a `null`/`void`
+  // result still slips through if the driver or command misbehaves; treat it
+  // the same as a timeout so the caller's retry loop can recover instead of
+  // dereferencing `null`.
+  if (
+    resultOrTimeout === 'timeout' ||
+    resultOrTimeout === undefined ||
+    resultOrTimeout === null
+  ) {
     return undefined;
   }
   const result = resultOrTimeout as {

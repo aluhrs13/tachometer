@@ -506,11 +506,16 @@ requires at least one timing measurement in the same benchmark:
 - Otherwise list them explicitly, e.g. `"measurement": ["callback", "cpu"]`.
 
 The reported value for each sample is the **delta** between two cumulative
-counter snapshots: a baseline taken right after navigation, and an end
-snapshot taken when the timing companion completes. CPU is most meaningful
-with a **`callback`** companion, which fires when your benchmark signals it
-is done — `fcp` fires before the page finishes loading, leaving a near-empty
-measurement window.
+counter snapshots: a baseline taken on the fresh `about:blank` tab **before
+navigation**, and an end snapshot taken when the timing companion completes.
+Capturing the baseline before navigation makes the measurement
+**load-inclusive** — synchronous page-load work (HTML parsing, synchronous
+`<script>`s, and the initial style/layout) is counted, not just post-load
+activity. (Enabling the counters *after* load, as earlier versions did, zeroed
+them once load had finished and made sync/load-bound benchmarks read ~0.) CPU
+is most meaningful with a **`callback`** companion, which fires when your
+benchmark signals it is done — `fcp` fires before the page finishes loading,
+leaving a near-empty measurement window.
 
 A single `cpu` measurement auto-expands into one result row per discovered
 sub-metric, each statistically compared independently:
@@ -539,6 +544,12 @@ Caveats:
 - **Cannot be combined with `memory`** in the same benchmark: the memory dump
   and its forced garbage collection consume main-thread CPU and would
   contaminate the measurement. Measure them in separate runs.
+- **CPU and timing windows differ.** Because the CPU baseline is taken before
+  navigation (load-inclusive) while a page's own timing `expression` typically
+  starts at some in-page `t0`, the CPU window is usually *wider* than the
+  timing window. A CPU sub-metric can therefore read slightly higher than a
+  page-reported duration — they cover different intervals, so don't expect
+  them to match exactly.
 
 Equivalent CLI flag: `--measure=cpu`.
 

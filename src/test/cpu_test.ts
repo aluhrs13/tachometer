@@ -18,9 +18,11 @@ import type {CpuMetricsCache} from '../measure.js';
 import {ResolvedCpuMeasurement} from '../types.js';
 
 /**
- * Build a minimal fake Chromium WebDriver exposing `sendDevToolsCommand`
- * for the two CPU commands we use: `Performance.enable` and
- * `Performance.getMetrics`.
+ * Build a minimal fake Chromium WebDriver exposing the two CDP send methods
+ * we use: `sendDevToolsCommand` (void) for `Performance.enable`, and
+ * `sendAndGetDevToolsCommand` (value-returning) for `Performance.getMetrics`.
+ * This mirrors selenium-webdriver, where only `sendAndGetDevToolsCommand`
+ * delivers a command's return payload.
  */
 function fakeCpuDriver(opts: {
   enableResult?: unknown;
@@ -35,6 +37,9 @@ function fakeCpuDriver(opts: {
         }
         return opts.enableResult;
       }
+      return undefined;
+    },
+    sendAndGetDevToolsCommand: async (cmd: string) => {
       if (cmd === 'Performance.getMetrics') {
         const m =
           typeof opts.metrics === 'function' ? opts.metrics() : opts.metrics;
@@ -103,7 +108,19 @@ suite('cpu', () => {
       assert.isUndefined(map);
     });
 
-    test('throws on a non-Chromium driver (no sendDevToolsCommand)', async () => {
+    test('returns undefined when getMetrics resolves to null (void CDP send)', async () => {
+      // Regression: selenium's plain `sendDevToolsCommand` resolves to
+      // null/void even for value-returning commands. If CPU capture ever
+      // sees a null result it must recover (return undefined for retry),
+      // not dereference null and crash.
+      const driver = {
+        sendAndGetDevToolsCommand: async () => null,
+      };
+      const map = await captureCpuMetrics(driver as unknown as DriverArg);
+      assert.isUndefined(map);
+    });
+
+    test('throws on a non-Chromium driver (no sendAndGetDevToolsCommand)', async () => {
       let threw = false;
       try {
         await captureCpuMetrics({} as unknown as DriverArg);

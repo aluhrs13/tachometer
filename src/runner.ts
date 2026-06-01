@@ -567,18 +567,30 @@ export class Runner {
       memoryDumpCache = {};
       cpuMetricsCache = {};
       await openAndSwitchToNewTab(driver, spec.browser);
-      await driver.get(url);
       if (hasCpu) {
-        // Enable CPU-time metrics and capture the baseline counter
-        // snapshot. We do this *after* navigation: an about:blank -> page
-        // navigation can swap the renderer process (resetting the
-        // cumulative counters), so post-navigation is the only point we
-        // know we're on the final renderer. `enableCpuMetrics` throws on
+        // Enable CPU-time metrics and capture the baseline *before*
+        // navigation, while still on the fresh about:blank tab.
+        //
+        // `Performance.enable({timeDomain:'threadTicks'})` zeroes the
+        // thread-time counters at the moment it is called. Enabling here -
+        // before `driver.get` runs the page's synchronous load work
+        // (parsing, sync <script>s, initial style/layout) - means that load
+        // work is counted between this ~zero baseline and the end snapshot.
+        // Enabling *after* navigation (as we used to) zeroed the counters
+        // once load had already finished, silently dropping all load-time
+        // CPU and making sync/load-bound benchmarks read ~0.
+        //
+        // Empirically the threadTicks domain carries across the
+        // about:blank -> page navigation (including a renderer process
+        // swap): the post-nav `getMetrics` reads the page renderer's
+        // post-enable CPU, and because the about:blank baseline is ~0 the
+        // cross-target subtraction stays valid. `enableCpuMetrics` throws on
         // platforms where thread-time metrics are unsupported - that fires
         // here on the first attempt, failing the run fast and clearly.
         await enableCpuMetrics(driver);
         cpuMetricsCache.baseline = await captureCpuMetrics(driver);
       }
+      await driver.get(url);
       for (
         let waited = 0;
         pendingMeasurements.size > 0 && waited <= this.attemptTimeout;
