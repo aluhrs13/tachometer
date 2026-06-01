@@ -10,9 +10,7 @@
                     "type": "string"
                 },
                 "mode": {
-                    "enum": [
-                        "callback"
-                    ],
+                    "const": "callback",
                     "type": "string"
                 },
                 "name": {
@@ -48,10 +46,8 @@
                     "type": "boolean"
                 },
                 "name": {
+                    "const": "chrome",
                     "description": "Name of the browser:\n\nOptions:\n  - chrome\n  - firefox\n  - safari\n  - edge\n  - ie",
-                    "enum": [
-                        "chrome"
-                    ],
                     "type": "string"
                 },
                 "profile": {
@@ -75,9 +71,7 @@
                             "$ref": "#/definitions/TraceConfig"
                         },
                         {
-                            "enum": [
-                                true
-                            ],
+                            "const": true,
                             "type": "boolean"
                         }
                     ],
@@ -143,21 +137,7 @@
                         },
                         {
                             "items": {
-                                "anyOf": [
-                                    {
-                                        "$ref": "#/definitions/CallbackMeasurement"
-                                    },
-                                    {
-                                        "$ref": "#/definitions/PerformanceEntryMeasurement"
-                                    },
-                                    {
-                                        "$ref": "#/definitions/ExpressionMeasurement"
-                                    },
-                                    {
-                                        "$ref": "#/definitions/MemoryMeasurement"
-                                    }
-                                ],
-                                "description": "The kinds of intervals we can measure (public/config-facing)."
+                                "$ref": "#/definitions/Measurement"
                             },
                             "type": "array"
                         },
@@ -214,10 +194,8 @@
             "additionalProperties": false,
             "properties": {
                 "name": {
+                    "const": "edge",
                     "description": "Name of the browser:\n\nOptions:\n  - chrome\n  - firefox\n  - safari\n  - edge\n  - ie",
-                    "enum": [
-                        "edge"
-                    ],
                     "type": "string"
                 },
                 "remoteUrl": {
@@ -245,9 +223,7 @@
                     "type": "string"
                 },
                 "mode": {
-                    "enum": [
-                        "expression"
-                    ],
+                    "const": "expression",
                     "type": "string"
                 },
                 "name": {
@@ -293,10 +269,8 @@
                     "type": "boolean"
                 },
                 "name": {
+                    "const": "firefox",
                     "description": "Name of the browser:\n\nOptions:\n  - chrome\n  - firefox\n  - safari\n  - edge\n  - ie",
-                    "enum": [
-                        "firefox"
-                    ],
                     "type": "string"
                 },
                 "preferences": {
@@ -333,9 +307,7 @@
             "description": "Configuration for cloning a Git repo at some ref with an optional package\nsub-path for monorepos, for use as an NPM dependency.",
             "properties": {
                 "kind": {
-                    "enum": [
-                        "git"
-                    ],
+                    "const": "git",
                     "type": "string"
                 },
                 "ref": {
@@ -365,10 +337,8 @@
             "additionalProperties": false,
             "properties": {
                 "name": {
+                    "const": "ie",
                     "description": "Name of the browser:\n\nOptions:\n  - chrome\n  - firefox\n  - safari\n  - edge\n  - ie",
-                    "enum": [
-                        "ie"
-                    ],
                     "type": "string"
                 },
                 "remoteUrl": {
@@ -384,6 +354,23 @@
                 "name"
             ],
             "type": "object"
+        },
+        "Measurement": {
+            "anyOf": [
+                {
+                    "$ref": "#/definitions/CallbackMeasurement"
+                },
+                {
+                    "$ref": "#/definitions/PerformanceEntryMeasurement"
+                },
+                {
+                    "$ref": "#/definitions/ExpressionMeasurement"
+                },
+                {
+                    "$ref": "#/definitions/MemoryMeasurement"
+                }
+            ],
+            "description": "The kinds of intervals we can measure (public/config-facing)."
         },
         "MemoryMeasurement": {
             "additionalProperties": false,
@@ -410,9 +397,7 @@
                     "type": "number"
                 },
                 "mode": {
-                    "enum": [
-                        "memory"
-                    ],
+                    "const": "memory",
                     "type": "string"
                 },
                 "name": {
@@ -435,9 +420,7 @@
                     "type": "string"
                 },
                 "mode": {
-                    "enum": [
-                        "performance"
-                    ],
+                    "const": "performance",
                     "type": "string"
                 },
                 "name": {
@@ -454,10 +437,8 @@
             "additionalProperties": false,
             "properties": {
                 "name": {
+                    "const": "safari",
                     "description": "Name of the browser:\n\nOptions:\n  - chrome\n  - firefox\n  - safari\n  - edge\n  - ie",
-                    "enum": [
-                        "safari"
-                    ],
                     "type": "string"
                 },
                 "remoteUrl": {

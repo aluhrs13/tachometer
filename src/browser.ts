@@ -250,7 +250,9 @@ function applyChromiumOpts(
     opts.setPerfLoggingPrefs({
       enableNetwork: true,
       enablePage: true,
+      enableTimeline: false,
       traceCategories: config.trace.categories.join(','),
+      bufferUsageReportingInterval: 1000,
     });
   }
   const {width, height} = config.windowSize;
