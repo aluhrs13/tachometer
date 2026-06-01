@@ -31,7 +31,7 @@ import {createRequire} from 'module';
 const require = createRequire(import.meta.url);
 
 const installedVersion = (): string =>
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   require(path.join('..', 'package.json')).version;
 
 export async function main(

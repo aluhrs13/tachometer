@@ -335,7 +335,7 @@ export async function parseConfigFile(
   parsedJson: unknown,
   configFilePath: string
 ): Promise<Partial<Config>> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   const schema = require('../config.schema.json');
   const result = jsonschema.validate(parsedJson, schema);
   if (result.errors.length > 0) {

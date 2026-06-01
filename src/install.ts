@@ -120,7 +120,7 @@ export const installOnDemand = async (packageName: string) => {
   try {
     await assertResolvable(packageName);
     return;
-  } catch (_error) {}
+  } catch {}
 
   let dependencies = new Map();
   try {

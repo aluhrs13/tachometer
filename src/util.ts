@@ -16,7 +16,7 @@ export function isHttpUrl(str: string): boolean {
     // Note an absolute Windows file path will parse as a URL (e.g.
     // 'C:\\foo\\bar' => {protocol: 'c:', pathname: '\\foo\\bar', ...})
     return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch (e) {
+  } catch {
     return false;
   }
 }

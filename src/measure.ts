@@ -510,7 +510,7 @@ async function drainPerformanceLog(
 ): Promise<webdriver.logging.Entry[]> {
   let all: webdriver.logging.Entry[] = [];
   // Loop until we get back an empty chunk to ensure we have everything.
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const chunk = await driver.manage().logs().get('performance');
     if (chunk.length === 0) {
@@ -742,7 +742,7 @@ async function captureMemoryDumpEvents(
   };
 
   const deadline = Date.now() + (options.timeoutMs ?? MEMORY_DUMP_TIMEOUT_MS);
-  let haveMatchingDump = false;
+  let haveMatchingDump: boolean;
   let quietDrains = 0;
   while (true) {
     await new Promise((r) => setTimeout(r, MEMORY_DUMP_POLL_INTERVAL_MS));

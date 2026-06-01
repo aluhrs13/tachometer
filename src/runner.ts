@@ -491,13 +491,11 @@ export class Runner {
     const writeTraceLogs =
       spec.browser.trace !== undefined &&
       spec.browser.trace.writeLogs !== false;
-    let consumedPerfLog: webdriver.logging.Entry[] | undefined = writeTraceLogs
-      ? []
-      : undefined;
+    let consumedPerfLog: webdriver.logging.Entry[] | undefined;
     // Shared between all memory measurements in this attempt so that one
     // Tracing.requestMemoryDump is issued per sample even if the spec asks
     // for multiple memory metrics (one dump contains every allocator).
-    let memoryDumpCache: MemoryDumpCache = {};
+    let memoryDumpCache: MemoryDumpCache;
 
     // We'll try N attempts per page. Within each attempt, we'll try to collect
     // all of the measurements by polling. If we hit our per-attempt timeout
