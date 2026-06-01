@@ -8,7 +8,7 @@ import {assert} from 'chai';
 import {existsSync} from 'fs';
 import {suite, test} from 'mocha';
 import * as path from 'path';
-import rimraf from 'rimraf';
+import {rimraf} from 'rimraf';
 import {main} from '../cli.js';
 import {ConfidenceInterval} from '../stats.js';
 import {testData} from './test_helpers.js';
@@ -51,15 +51,7 @@ function ciAverage(ci: ConfidenceInterval): number {
 }
 
 function rimrafAsync(path: string) {
-  return new Promise<void>(function (resolve, reject) {
-    rimraf(path, {}, (error) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve();
-      }
-    });
-  });
+  return rimraf(path);
 }
 
 suite('e2e', function () {
