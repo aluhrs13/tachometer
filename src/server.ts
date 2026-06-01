@@ -7,7 +7,7 @@
 import * as http from 'http';
 import * as net from 'net';
 import * as path from 'path';
-import {Stream} from 'stream';
+import {Stream, Readable} from 'stream';
 
 import Koa from 'koa';
 import mount from 'koa-mount';
@@ -211,7 +211,7 @@ export class Server {
     } else if (Buffer.isBuffer(body)) {
       bodyString = body.toString();
     } else if (isStream(body)) {
-      bodyString = await getStream(body);
+      bodyString = await getStream(body as Readable);
       // We consumed the stream.
       ctx.response.body = bodyString;
     } else if (body === null || body === undefined) {
