@@ -13,6 +13,15 @@ import {BenchmarkResult, Measurement, Unit} from './types.js';
 
 export interface JsonOutputFile {
   benchmarks: Benchmark[];
+  /**
+   * Names of the metrics the benchmark author pinned as most important, in
+   * the order declared in the config's `pinnedMetrics`. Omitted entirely when
+   * none were declared. Each entry corresponds to a `measurement.name` value
+   * (or tachometer's derived metric label) found on one or more of the
+   * {@link benchmarks} above. Purely advisory: consumers may use it to
+   * highlight or prioritise these metrics.
+   */
+  pinnedMetrics?: string[];
 }
 
 interface BrowserConfigResult extends BrowserConfig {
@@ -69,7 +78,8 @@ interface ConfidenceInterval {
 }
 
 export function jsonOutput(
-  results: ResultStatsWithDifferences[]
+  results: ResultStatsWithDifferences[],
+  pinnedMetrics: string[] = []
 ): JsonOutputFile {
   const benchmarks: Benchmark[] = [];
   for (const result of results) {
@@ -118,7 +128,10 @@ export function jsonOutput(
         : {}),
     });
   }
-  return {benchmarks};
+  // Only emit `pinnedMetrics` when the author declared at least one, to keep
+  // the output stable for the common (unpinned) case and avoid surprising
+  // existing consumers with a new always-present empty array.
+  return pinnedMetrics.length > 0 ? {benchmarks, pinnedMetrics} : {benchmarks};
 }
 
 // TODO(aomarks) Remove this in next major version.

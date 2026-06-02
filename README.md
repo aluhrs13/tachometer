@@ -1000,6 +1000,47 @@ Which is equivalent to:
 }
 ```
 
+### Pinned metrics
+
+A single benchmark can produce many metrics (for example `fcp`, a named
+callback measurement, or a memory aggregate). Use the top-level `pinnedMetrics`
+property to declare which metric names matter most for a config, in priority
+order:
+
+```json
+{
+  "pinnedMetrics": ["build-time", "total-time"],
+  "benchmarks": [
+    {
+      "url": "foo/bar.html",
+      "measurement": [
+        {"name": "build-time", "mode": "performance", "entryName": "build"},
+        {"name": "total-time", "mode": "performance", "entryName": "total"}
+      ]
+    }
+  ]
+}
+```
+
+Each entry must match a measurement's resolved metric name — either an explicit
+`measurement.name`, or the label tachometer derives when one isn't given (such
+as `fcp`, `callback`, the global expression, or `memory:sum:<name>` for a named
+memory aggregate). The list is declared once per config and applies across every
+variant, since metric names are shared across variants.
+
+For memory metrics, prefer pinning a named aggregate (`memory:sum:<name>`,
+declared via a measurement's `categories`/`sumAs`) rather than a raw
+`memory:tuple:...` label, whose process-role and allocator segments can vary
+across browser versions and platforms.
+
+`pinnedMetrics` is purely declarative metadata: it never changes what is
+measured or how statistics are computed. When you write results with
+`--json-file`, tachometer copies the list verbatim into a top-level
+`pinnedMetrics` field (omitted when empty) so downstream consumers — such as
+report generators — can highlight or prioritise those metrics. If a pinned name
+matches no produced metric, tachometer prints a non-fatal warning so you can
+catch typos.
+
 ## CLI usage
 
 Run a benchmark from a local file:

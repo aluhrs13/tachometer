@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Polymer/tachometer/master/config.schema.json",
+  "pinnedMetrics": ["build-time", "total-time"],
+  "benchmarks": [
+    {
+      "url": "random-global.html"
+    }
+  ]
+}
