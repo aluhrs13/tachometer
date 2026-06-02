@@ -46,6 +46,7 @@ suite('makeConfig', function () {
       csvFileStats: '',
       csvFileRaw: '',
       memoryCategoriesFile: '',
+      pinnedMetrics: [],
       githubCheck: undefined,
       benchmarks: [
         {
@@ -92,6 +93,7 @@ suite('makeConfig', function () {
       csvFileStats: '',
       csvFileRaw: '',
       memoryCategoriesFile: '',
+      pinnedMetrics: [],
       // TODO(aomarks) Be consistent about undefined vs unset.
       githubCheck: undefined,
       benchmarks: [
@@ -139,6 +141,7 @@ suite('makeConfig', function () {
       csvFileStats: '',
       csvFileRaw: '',
       memoryCategoriesFile: '',
+      pinnedMetrics: [],
       githubCheck: undefined,
       benchmarks: [
         {
@@ -182,6 +185,7 @@ suite('makeConfig', function () {
       csvFileStats: 'stats.csv',
       csvFileRaw: 'raw.csv',
       memoryCategoriesFile: '',
+      pinnedMetrics: [],
       jsonFile: 'out.json',
       legacyJsonFile: '',
       forceCleanNpmInstall: true,
@@ -230,6 +234,7 @@ suite('makeConfig', function () {
       csvFileStats: '',
       csvFileRaw: '',
       memoryCategoriesFile: '',
+      pinnedMetrics: [],
       jsonFile: '',
       legacyJsonFile: '',
       forceCleanNpmInstall: false,
@@ -313,6 +318,11 @@ suite('makeConfig', function () {
       assert.match((e as Error).message, /cpu/i);
     }
     assert.isTrue(threw);
+  });
+
+  test('config file pinnedMetrics is parsed', async () => {
+    const config = await makeConfig(parseFlags(['--config=pinned-metrics.json']));
+    assert.deepEqual(config.pinnedMetrics, ['build-time', 'total-time']);
   });
 });
 

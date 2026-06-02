@@ -48,6 +48,12 @@ export interface Config {
    * `--memory-categories-file`). Empty string means "don't write".
    */
   memoryCategoriesFile: string;
+  /**
+   * Names of the metrics the benchmark author considers most important, in
+   * priority order. Declarative metadata copied into the JSON output; empty
+   * when none were declared.
+   */
+  pinnedMetrics: string[];
 }
 
 export async function makeConfig(opts: Opts): Promise<Config> {
@@ -279,6 +285,8 @@ export function applyDefaults(partial: Partial<Config>): Config {
         : defaults.resolveBareModules,
     root: partial.root !== undefined ? partial.root : defaults.root,
     timeout: partial.timeout !== undefined ? partial.timeout : defaults.timeout,
+    pinnedMetrics:
+      partial.pinnedMetrics !== undefined ? partial.pinnedMetrics : [],
   };
 }
 

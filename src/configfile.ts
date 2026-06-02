@@ -70,6 +70,21 @@ export interface ConfigFile {
   benchmarks: ConfigFileBenchmark[];
 
   /**
+   * Names of the metrics that matter most for this benchmark, in priority
+   * order. Each entry should match a measurement's metric name: either an
+   * explicit `measurement.name`, or the label tachometer derives when one
+   * isn't given (e.g. `fcp`, `callback`, the global expression, or
+   * `memory:sum:<name>` for a named memory aggregate).
+   *
+   * This is purely declarative metadata - it never changes what is measured
+   * or how statistics are computed. Tachometer copies it verbatim into the
+   * top-level `pinnedMetrics` field of the `--json-file` output so downstream
+   * consumers (such as report generators) can highlight or prioritise these
+   * metrics.
+   */
+  pinnedMetrics?: string[];
+
+  /**
    * Whether to automatically convert ES module imports with bare module
    * specifiers to paths.
    */
@@ -393,6 +408,9 @@ export async function parseConfigFile(
         : undefined,
     benchmarks,
     resolveBareModules: validated.resolveBareModules,
+    ...(validated.pinnedMetrics !== undefined
+      ? {pinnedMetrics: validated.pinnedMetrics}
+      : {}),
   };
 }
 

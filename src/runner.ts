@@ -849,7 +849,24 @@ export class Runner {
     }
 
     if (config.jsonFile) {
-      const json = await jsonOutput(withDifferences);
+      if (config.pinnedMetrics.length > 0) {
+        const producedMetrics = new Set(
+          withDifferences.map((s) => measurementName(s.result.measurement))
+        );
+        const unmatched = config.pinnedMetrics.filter(
+          (name) => !producedMetrics.has(name)
+        );
+        if (unmatched.length > 0) {
+          console.log(
+            ansi.format(
+              `[bold yellow]{NOTE} pinnedMetrics did not match any measured ` +
+                `metric: ${unmatched.join(', ')}. ` +
+                `Check the metric names against your measurement names.`
+            )
+          );
+        }
+      }
+      const json = await jsonOutput(withDifferences, config.pinnedMetrics);
       await fsExtra.writeJSON(config.jsonFile, json, {spaces: 2});
     }
 
