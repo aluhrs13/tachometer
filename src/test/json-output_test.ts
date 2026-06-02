@@ -303,4 +303,22 @@ suite('jsonOutput', () => {
     };
     assert.deepEqual(roundPlacesAll(actual, 5), expected);
   });
+
+  test('pinnedMetrics is included when non-empty', async () => {
+    const config: ConfigFile = {
+      benchmarks: [{name: 'foo', url: 'http://example.com?foo'}],
+    };
+    const results = await fakeResults(config);
+    const actual = jsonOutput(results, ['build-time', 'total-time']);
+    assert.deepEqual(actual.pinnedMetrics, ['build-time', 'total-time']);
+  });
+
+  test('pinnedMetrics is omitted when empty', async () => {
+    const config: ConfigFile = {
+      benchmarks: [{name: 'foo', url: 'http://example.com?foo'}],
+    };
+    const results = await fakeResults(config);
+    assert.strictEqual(jsonOutput(results).pinnedMetrics, undefined);
+    assert.strictEqual(jsonOutput(results, []).pinnedMetrics, undefined);
+  });
 });
