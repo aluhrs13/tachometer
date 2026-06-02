@@ -95,6 +95,7 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
   }
 
   let measurement: Measurement | undefined;
+  let cpuMeasure = false;
   if (opts.measure === 'callback') {
     measurement = {
       mode: 'callback',
@@ -123,12 +124,26 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
         ? {maxAllocatorDepth: opts['memory-max-allocator-depth']}
         : {}),
     };
+  } else if (opts.measure === 'cpu') {
+    // CPU is a companion metric: leave `measurement` undefined and flag
+    // it so each per-url spec pairs a `{mode:'cpu'}` entry with that url's
+    // default timing measurement (its completion signal).
+    cpuMeasure = true;
   } else if (opts.measure !== undefined) {
     throwUnreachable(
       opts.measure,
       `Internal error: unknown measure ${JSON.stringify(opts.measure)}`
     );
   }
+
+  // Build the measurement array for one url, honouring the cpu companion
+  // expansion above.
+  const measurementsForUrl = (url: LocalUrl | RemoteUrl): Measurement[] => {
+    if (cpuMeasure) {
+      return [defaults.measurement(url), {mode: 'cpu'}];
+    }
+    return [measurement === undefined ? defaults.measurement(url) : measurement];
+  };
 
   // Benchmark paths/URLs are the bare arguments not associated with a flag, so
   // they are found in _unknown.
@@ -145,9 +160,7 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
         const spec: BenchmarkSpec = {
           name: arg.alias || arg.url,
           browser,
-          measurement: [
-            measurement === undefined ? defaults.measurement(url) : measurement,
-          ],
+          measurement: measurementsForUrl(url),
           url,
         };
         specs.push(spec);
@@ -171,11 +184,7 @@ export async function specsFromOpts(opts: Opts): Promise<BenchmarkSpec[]> {
           const spec: BenchmarkSpec = {
             name,
             browser,
-            measurement: [
-              measurement === undefined
-                ? defaults.measurement(url)
-                : measurement,
-            ],
+            measurement: measurementsForUrl(url),
             url,
           };
           specs.push(spec);

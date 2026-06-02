@@ -20,6 +20,9 @@ import {fileKind} from './util.js';
 /** Browsers that support the Chromium memory-infra subsystem. */
 const memoryInfraBrowsers = new Set(['chrome', 'edge']);
 
+/** Browsers that support CDP CPU-time metrics (Performance.getMetrics). */
+const cpuMetricsBrowsers = new Set(['chrome', 'edge']);
+
 /**
  * Validated and fully specified configuration.
  */
@@ -141,6 +144,8 @@ export async function makeConfig(opts: Opts): Promise<Config> {
   for (const spec of config.benchmarks) {
     let hasMemoryMeasurement = false;
     let memoryCount = 0;
+    let hasCpuMeasurement = false;
+    let hasTimingMeasurement = false;
     for (const measurement of spec.measurement) {
       if (
         measurement.mode === 'performance' &&
@@ -152,6 +157,13 @@ export async function makeConfig(opts: Opts): Promise<Config> {
             `first contentful paint (FCP) measurement`
         );
       }
+      if (
+        measurement.mode === 'callback' ||
+        measurement.mode === 'performance' ||
+        measurement.mode === 'expression'
+      ) {
+        hasTimingMeasurement = true;
+      }
       if (measurement.mode === 'memory') {
         hasMemoryMeasurement = true;
         memoryCount++;
@@ -160,6 +172,16 @@ export async function makeConfig(opts: Opts): Promise<Config> {
             `Browser ${spec.browser.name} does not support memory ` +
               `measurement. Only chrome and edge support Chromium's ` +
               `memory-infra tracing.`
+          );
+        }
+      }
+      if (measurement.mode === 'cpu') {
+        hasCpuMeasurement = true;
+        if (!cpuMetricsBrowsers.has(spec.browser.name)) {
+          throw new Error(
+            `Browser ${spec.browser.name} does not support CPU ` +
+              `measurement. Only chrome and edge expose the Chrome ` +
+              `DevTools Protocol performance metrics tachometer reads.`
           );
         }
       }
@@ -175,6 +197,26 @@ export async function makeConfig(opts: Opts): Promise<Config> {
           `measurements. Only one \`mode: "memory"\` measurement per ` +
           `benchmark is supported - it is auto-expanded into one result ` +
           `per allocator/attribute discovered in every process.`
+      );
+    }
+
+    if (hasCpuMeasurement && !hasTimingMeasurement) {
+      throw new Error(
+        `Benchmark "${spec.name}" declares a \`mode: "cpu"\` measurement ` +
+          `but no timing measurement to pair with. CPU is a companion ` +
+          `metric: it has no completion signal of its own and snapshots ` +
+          `its value when a timing measurement (callback, fcp, or a ` +
+          `global/expression poll) finishes. Add a timing measurement, ` +
+          `e.g. \`"measurement": ["callback", "cpu"]\`.`
+      );
+    }
+    if (hasCpuMeasurement && hasMemoryMeasurement) {
+      throw new Error(
+        `Benchmark "${spec.name}" declares both \`mode: "cpu"\` and ` +
+          `\`mode: "memory"\` measurements. They cannot be combined in one ` +
+          `benchmark: the memory dump and its forced garbage collection ` +
+          `consume main-thread CPU, contaminating the CPU measurement. ` +
+          `Measure CPU and memory in separate benchmark runs.`
       );
     }
 

@@ -12,9 +12,11 @@ import {
   AggregatedMemoryMeasurement,
   isAggregatedMemoryMeasurement,
   isReadyMemoryMeasurement,
+  isResolvedCpuMeasurement,
   isResolvedMemoryMeasurement,
   MemoryMeasurement,
   PerformanceEntryMeasurement,
+  ResolvedCpuMeasurement,
   ResolvedMemoryMeasurement,
   RuntimeMeasurement,
 } from './types.js';
@@ -40,7 +42,8 @@ export async function measure(
   measurement: RuntimeMeasurement,
   server: Server | undefined,
   consumedPerfLog?: webdriver.logging.Entry[],
-  memoryDumpCache?: MemoryDumpCache
+  memoryDumpCache?: MemoryDumpCache,
+  cpuMetricsCache?: CpuMetricsCache
 ): Promise<number | undefined> {
   switch (measurement.mode) {
     case 'callback':
@@ -65,6 +68,22 @@ export async function measure(
         consumedPerfLog,
         memoryDumpCache,
       });
+    case 'cpu':
+      if (!isResolvedCpuMeasurement(measurement)) {
+        throw new Error(
+          'Internal error: unresolved cpu measurement reached `measure()`. ' +
+            'All `mode:"cpu"` measurements must be expanded into ' +
+            '`ResolvedCpuMeasurement` entries before sampling begins.'
+        );
+      }
+      if (cpuMetricsCache === undefined) {
+        throw new Error(
+          'Internal error: cpu measurement reached `measure()` without a ' +
+            'CpuMetricsCache. The runner must capture a baseline snapshot ' +
+            'after navigation before sampling cpu measurements.'
+        );
+      }
+      return queryForCpu(driver, measurement, cpuMetricsCache);
   }
   throwUnreachable(
     measurement,
@@ -224,7 +243,16 @@ interface ProcessMetadataEvent {
 }
 
 interface WebDriverWithSendDevToolsCommand {
+  // Fire-and-forget CDP send. Selenium resolves this to `void`/`null` even
+  // for commands that return a payload, so it must only be used for commands
+  // whose result we don't need (e.g. Performance.enable, Tracing.*).
   sendDevToolsCommand?: (command: string, params: unknown) => Promise<unknown>;
+  // CDP send that resolves to the command's actual return value. Required for
+  // value-returning commands such as Performance.getMetrics.
+  sendAndGetDevToolsCommand?: (
+    command: string,
+    params: unknown
+  ) => Promise<unknown>;
 }
 
 /**
@@ -1083,6 +1111,15 @@ export function measurementName(measurement: RuntimeMeasurement): string {
       // resolved or aggregated form, so this branch is only hit for
       // debug/log output during the probe phase.
       return 'memory';
+    case 'cpu':
+      if (isResolvedCpuMeasurement(measurement)) {
+        return cpuCompareKey(measurement);
+      }
+      // Unresolved (pre-expansion) cpu measurements don't yet have a
+      // metric; show a generic name. Real result rows always carry the
+      // resolved form, so this branch is only hit for debug/log output
+      // before the runner expands cpu measurements.
+      return 'cpu';
   }
   throwUnreachable(
     measurement,
@@ -1116,6 +1153,217 @@ export function memoryAggregateCompareKey(
 ): string {
   return `memory:sum:${m.sumAs}`;
 }
+
+// ----- cpu measurement ------------------------------------------------------
+
+/**
+ * Per-attempt cache shared by all `mode:'cpu'` measurements of a single
+ * spec. The runner creates a fresh one each sampling attempt and:
+ *
+ *  1. captures a `baseline` snapshot right after `driver.get(url)`
+ *     returns (we are guaranteed to be on the final renderer by then),
+ *  2. captures an `end` snapshot once - the first time any cpu
+ *     measurement is sampled after all timing companions have completed.
+ *
+ * `Performance.getMetrics` returns cumulative monotonic counters for the
+ * target's lifetime, so each reported value is `end - baseline`. Caching
+ * `end` ensures every per-metric row in the same attempt is read from one
+ * consistent snapshot rather than re-querying (which would let the
+ * counters drift between rows).
+ */
+export interface CpuMetricsCache {
+  /** Counter snapshot (seconds) taken just after navigation. */
+  baseline?: Map<string, number>;
+  /** Counter snapshot (seconds) taken when timing companions completed. */
+  end?: Map<string, number>;
+}
+
+/**
+ * Float epsilon (in seconds) used when comparing the `end` and
+ * `baseline` CPU counters. `Performance.getMetrics` reports
+ * `base::ThreadTicks` with microsecond resolution as a double, so tiny
+ * negative deltas can appear purely from float representation; treat
+ * anything within `[-CPU_DELTA_EPSILON_S, 0]` as zero. A delta more
+ * negative than this indicates the renderer/target counters actually
+ * reset (e.g. a cross-process navigation swapped renderers), which is
+ * unrecoverable for this sample.
+ */
+const CPU_DELTA_EPSILON_S = 1e-6;
+
+/**
+ * Enable CDP performance metrics in main-thread CPU-time mode.
+ *
+ * `timeDomain: 'threadTicks'` makes the `*Duration` metrics report
+ * `base::ThreadTicks` (main renderer-thread CPU) instead of wall-clock
+ * time. This domain is unsupported on some platforms, in which case
+ * `Performance.enable` itself fails - we surface that as a clear error so
+ * the run fails fast rather than silently reporting wall-clock numbers.
+ *
+ * Must be called once per attempt, after the tab is open (tabs are
+ * closed and reopened each attempt) but *before* navigating to the page,
+ * so the baseline snapshot taken immediately after is ~zero and the page's
+ * load-time CPU is counted. The threadTicks domain carries across the
+ * about:blank -> page navigation.
+ */
+export async function enableCpuMetrics(
+  driver: webdriver.WebDriver,
+  options: {devtoolsTimeoutMs?: number} = {}
+): Promise<void> {
+  const driverWithCdp = driver as unknown as WebDriverWithSendDevToolsCommand;
+  if (!driverWithCdp.sendDevToolsCommand) {
+    throw new Error(
+      'CPU measurement requires a Chromium-based browser ' +
+        '(chrome or edge); this WebDriver does not expose sendDevToolsCommand.'
+    );
+  }
+  const devtoolsTimeoutMs =
+    options.devtoolsTimeoutMs ?? DEVTOOLS_COMMAND_TIMEOUT_MS;
+  let result: unknown;
+  try {
+    result = await withTimeout(
+      driverWithCdp.sendDevToolsCommand('Performance.enable', {
+        timeDomain: 'threadTicks',
+      }),
+      devtoolsTimeoutMs
+    );
+  } catch (e) {
+    throw new Error(
+      'Failed to enable CPU measurement via ' +
+        "Performance.enable({timeDomain:'threadTicks'}). Thread-time " +
+        'metrics are not supported on every platform. Underlying error: ' +
+        ((e as Error)?.message ?? String(e))
+    );
+  }
+  if (result === 'timeout') {
+    throw new Error(
+      'Timed out enabling CPU measurement via Performance.enable; ' +
+        'chromedriver did not respond within ' +
+        `${devtoolsTimeoutMs}ms.`
+    );
+  }
+}
+
+/**
+ * Snapshot the CDP performance counters. Returns a map of metric name to
+ * value in **seconds** (the raw `Performance.getMetrics` unit for the
+ * `*Duration` metrics), or `undefined` if the command fails or times out
+ * (so the caller's retry loop can try again).
+ */
+export async function captureCpuMetrics(
+  driver: webdriver.WebDriver,
+  options: {devtoolsTimeoutMs?: number} = {}
+): Promise<Map<string, number> | undefined> {
+  const driverWithCdp = driver as unknown as WebDriverWithSendDevToolsCommand;
+  if (!driverWithCdp.sendAndGetDevToolsCommand) {
+    throw new Error(
+      'CPU measurement requires a Chromium-based browser ' +
+        '(chrome or edge); this WebDriver does not expose ' +
+        'sendAndGetDevToolsCommand.'
+    );
+  }
+  const devtoolsTimeoutMs =
+    options.devtoolsTimeoutMs ?? DEVTOOLS_COMMAND_TIMEOUT_MS;
+  let resultOrTimeout: unknown;
+  try {
+    resultOrTimeout = await withTimeout(
+      driverWithCdp.sendAndGetDevToolsCommand('Performance.getMetrics', {}),
+      devtoolsTimeoutMs
+    );
+  } catch {
+    return undefined;
+  }
+  // `sendAndGetDevToolsCommand` returns the CDP payload, but a `null`/`void`
+  // result still slips through if the driver or command misbehaves; treat it
+  // the same as a timeout so the caller's retry loop can recover instead of
+  // dereferencing `null`.
+  if (
+    resultOrTimeout === 'timeout' ||
+    resultOrTimeout === undefined ||
+    resultOrTimeout === null
+  ) {
+    return undefined;
+  }
+  const result = resultOrTimeout as {
+    metrics?: Array<{name?: string; value?: number}>;
+  };
+  if (!result.metrics || !Array.isArray(result.metrics)) {
+    return undefined;
+  }
+  const map = new Map<string, number>();
+  for (const m of result.metrics) {
+    if (typeof m.name === 'string' && typeof m.value === 'number') {
+      map.set(m.name, m.value);
+    }
+  }
+  return map;
+}
+
+/**
+ * Compute the `compareKey` for a resolved cpu measurement. The
+ * `cpu:mainThread:` prefix keeps these structurally distinct from
+ * wall-clock `ms` results (which carry no compareKey) so the stats engine
+ * only ever compares a metric against the same metric across variants.
+ */
+export function cpuCompareKey(m: ResolvedCpuMeasurement): string {
+  return `cpu:mainThread:${m.metric}`;
+}
+
+/**
+ * Resolve one cpu metric for the current sample. Captures the `end`
+ * counter snapshot into the shared cache on first call (so every
+ * per-metric row in this attempt reads from one consistent snapshot),
+ * then returns `(end - baseline) * 1000` milliseconds for the requested
+ * metric.
+ *
+ * Returns `undefined` (signalling the runner's poll loop to retry) when:
+ *  - the baseline snapshot is missing (runner hasn't captured it yet), or
+ *  - the `end` snapshot can't be read (getMetrics failed/timed out).
+ *
+ * Throws when the metric is absent from a successfully-read snapshot
+ * (curated metrics are always emitted, so this means something is wrong)
+ * or when the delta is meaningfully negative (counters reset, e.g. a
+ * cross-process navigation swapped renderers - unrecoverable).
+ */
+export async function queryForCpu(
+  driver: webdriver.WebDriver,
+  measurement: ResolvedCpuMeasurement,
+  cache: CpuMetricsCache,
+  options: {devtoolsTimeoutMs?: number} = {}
+): Promise<number | undefined> {
+  if (cache.baseline === undefined) {
+    return undefined;
+  }
+  if (cache.end === undefined) {
+    const end = await captureCpuMetrics(driver, options);
+    if (end === undefined) {
+      return undefined;
+    }
+    cache.end = end;
+  }
+  const baselineValue = cache.baseline.get(measurement.metric);
+  const endValue = cache.end.get(measurement.metric);
+  if (baselineValue === undefined || endValue === undefined) {
+    throw new Error(
+      `CPU metric "${measurement.metric}" was not present in a ` +
+        'Performance.getMetrics snapshot. This metric should always be ' +
+        'emitted when Performance.enable succeeds; the Chromium build may ' +
+        'not support it.'
+    );
+  }
+  const deltaSeconds = endValue - baselineValue;
+  if (deltaSeconds < -CPU_DELTA_EPSILON_S) {
+    throw new Error(
+      `CPU metric "${measurement.metric}" decreased between baseline and ` +
+        `end (${deltaSeconds.toFixed(6)}s). The renderer's cumulative CPU ` +
+        'counters reset mid-sample, most likely because navigation swapped ' +
+        'to a new renderer process. CPU measurement cannot produce a ' +
+        'reliable value for this sample.'
+    );
+  }
+  const clamped = deltaSeconds < 0 ? 0 : deltaSeconds;
+  return clamped * 1000;
+}
+// ----- end cpu measurement --------------------------------------------------
 
 /**
  * Compile a glob pattern into an anchored RegExp. Used by

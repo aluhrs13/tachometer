@@ -23,6 +23,7 @@ import {makeUniqueSpecLabelFn} from './format.js';
 import {
   BenchmarkSpec,
   ExtendedPackageDependencyMap,
+  isTimingMeasurement,
   Measurement,
   measurements,
 } from './types.js';
@@ -171,6 +172,7 @@ type ConfigFileMeasurement =
   | 'fcp'
   | 'global'
   | 'memory'
+  | 'cpu'
   | Measurement
   | Array<Measurement>;
 
@@ -486,6 +488,15 @@ async function parseBenchmark(
         gcBefore: defaults.memoryDefaultGcBefore,
       },
     ];
+  } else if (benchmark.measurement === 'cpu') {
+    // A bare "cpu" string has no timing companion to define completion;
+    // applyDefaults() injects the url-appropriate default timing
+    // measurement before the cpu entry once the url is known.
+    spec.measurement = [
+      {
+        mode: 'cpu',
+      },
+    ];
   } else if (Array.isArray(benchmark.measurement)) {
     spec.measurement = benchmark.measurement;
   } else if (benchmark.measurement !== undefined) {
@@ -630,6 +641,17 @@ function applyDefaults(partialSpec: Partial<BenchmarkSpec>): BenchmarkSpec {
   }
   if (measurement === undefined) {
     measurement = [defaults.measurement(url)];
+  }
+  // A cpu measurement is a companion: it needs a timing measurement in the
+  // same spec to define "done". If the user supplied a cpu measurement
+  // (e.g. a bare "cpu" string, or `["cpu"]`) without any timing
+  // measurement, inject the url-appropriate default timing measurement
+  // ahead of it so the companion is always present.
+  if (
+    measurement.some((m) => m.mode === 'cpu') &&
+    !measurement.some((m) => isTimingMeasurement(m))
+  ) {
+    measurement = [defaults.measurement(url), ...measurement];
   }
   return {name, url, browser, measurement};
 }

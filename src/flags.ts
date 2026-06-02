@@ -168,7 +168,10 @@ export const optDefs: commandLineUsage.OptionDefinition[] = [
       '*   global: set window.tachometerResult = <milliseconds>\n' +
       '*      fcp: first contentful paint\n' +
       '*   memory: Chromium memory-infra dump (auto-discovers every\n' +
-      '             allocator/attribute across every process)',
+      '             allocator/attribute across every process)\n' +
+      '*      cpu: main-thread renderer CPU time, Chromium only\n' +
+      '             (auto-expands into per-metric rows; pairs with a\n' +
+      '             default timing measurement as its completion signal)',
     type: (str: string): string => {
       if (!measurements.has(str)) {
         throw new Error(

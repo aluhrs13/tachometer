@@ -142,6 +142,9 @@
                             "$ref": "#/definitions/MemoryMeasurement"
                         },
                         {
+                            "$ref": "#/definitions/CpuMeasurement"
+                        },
+                        {
                             "items": {
                                 "anyOf": [
                                     {
@@ -155,6 +158,9 @@
                                     },
                                     {
                                         "$ref": "#/definitions/MemoryMeasurement"
+                                    },
+                                    {
+                                        "$ref": "#/definitions/CpuMeasurement"
                                     }
                                 ],
                                 "description": "The kinds of intervals we can measure (public/config-facing)."
@@ -164,6 +170,7 @@
                         {
                             "enum": [
                                 "callback",
+                                "cpu",
                                 "fcp",
                                 "global",
                                 "memory"
@@ -207,6 +214,29 @@
             "required": [
                 "dependencies",
                 "label"
+            ],
+            "type": "object"
+        },
+        "CpuMeasurement": {
+            "additionalProperties": false,
+            "description": "Capture main-thread renderer CPU time via Chromium's CDP\n`Performance.getMetrics` (enabled with `timeDomain: 'threadTicks'`).\n\nThis is the user-facing (unresolved) form. CPU is a *companion*\nmeasurement: it has no completion signal of its own and snapshots its\n`end` value when the spec's timing measurement (callback / fcp /\nglobal) completes. A spec containing a `mode:'cpu'` measurement must\ntherefore also contain at least one timing measurement. At warmup\ntime each unresolved `CpuMeasurement` is expanded into one\n{@link ResolvedCpuMeasurement} per metric in\n{@link cpuDefaultMetrics}.\n\nThe reported values are **main renderer thread CPU only** - they\nexclude web/service workers, the compositor/raster threads, the GPU\nprocess, the network service, and every other process. The sub-metrics\noverlap (e.g. `ScriptDuration` is part of `TaskDuration`) and are NOT\nadditive.",
+            "properties": {
+                "compareKey": {
+                    "description": "Optional key used by the stats engine to group pairwise comparisons.\nWhen set, {@link computeDifferences} only computes a difference between\ntwo results whose `compareKey`s match. When unset (the default for all\nnon-memory measurements), the existing all-pairs comparison behavior is\npreserved. Resolved memory measurements set this to\n`memory:<processRole>:<allocator>.<attribute>` so each auto-discovered\ncategory is only compared against the same category in other variants.",
+                    "type": "string"
+                },
+                "mode": {
+                    "enum": [
+                        "cpu"
+                    ],
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "mode"
             ],
             "type": "object"
         },

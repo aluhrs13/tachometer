@@ -278,6 +278,48 @@ suite('makeConfig', function () {
     await checkConfig(argv, expected);
   });
 
+  test('--measure=cpu expands to [timing companion, cpu]', async () => {
+    const argv = ['--measure=cpu', 'random-global.html'];
+    const config = await makeConfig(parseFlags(argv));
+    assert.deepEqual(config.benchmarks[0].measurement, [
+      {mode: 'callback'},
+      {mode: 'cpu'},
+    ]);
+  });
+
+  test('bare "cpu" in a config file injects a timing companion', async () => {
+    const argv = ['--config=cpu-companion.json'];
+    const config = await makeConfig(parseFlags(argv));
+    assert.deepEqual(config.benchmarks[0].measurement, [
+      {mode: 'callback'},
+      {mode: 'cpu'},
+    ]);
+  });
+
+  test('cpu measurement is rejected for non-Chromium browsers', async () => {
+    const argv = ['--browser=firefox', '--measure=cpu', 'random-global.html'];
+    let threw = false;
+    try {
+      await makeConfig(parseFlags(argv));
+    } catch (e) {
+      threw = true;
+      assert.match((e as Error).message, /cpu/i);
+    }
+    assert.isTrue(threw);
+  });
+
+  test('cpu and memory cannot be combined in one spec', async () => {
+    const argv = ['--config=cpu-and-memory.json'];
+    let threw = false;
+    try {
+      await makeConfig(parseFlags(argv));
+    } catch (e) {
+      threw = true;
+      assert.match((e as Error).message, /cpu/i);
+    }
+    assert.isTrue(threw);
+  });
+
   test('config file pinnedMetrics is parsed', async () => {
     const config = await makeConfig(parseFlags(['--config=pinned-metrics.json']));
     assert.deepEqual(config.pinnedMetrics, ['build-time', 'total-time']);

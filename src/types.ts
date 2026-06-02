@@ -75,7 +75,8 @@ export type Measurement =
   | CallbackMeasurement
   | PerformanceEntryMeasurement
   | ExpressionMeasurement
-  | MemoryMeasurement;
+  | MemoryMeasurement
+  | CpuMeasurement;
 
 /**
  * The same union plus the internal {@link ResolvedMemoryMeasurement} and
@@ -89,7 +90,8 @@ export type Measurement =
 export type RuntimeMeasurement =
   | Measurement
   | ResolvedMemoryMeasurement
-  | AggregatedMemoryMeasurement;
+  | AggregatedMemoryMeasurement
+  | ResolvedCpuMeasurement;
 
 export interface MeasurementBase {
   name?: string;
@@ -327,13 +329,96 @@ export function isReadyMemoryMeasurement(
   return isResolvedMemoryMeasurement(m) || isAggregatedMemoryMeasurement(m);
 }
 
-export type CommandLineMeasurements = 'callback' | 'fcp' | 'global' | 'memory';
+/**
+ * Capture main-thread renderer CPU time via Chromium's CDP
+ * `Performance.getMetrics` (enabled with `timeDomain: 'threadTicks'`).
+ *
+ * This is the user-facing (unresolved) form. CPU is a *companion*
+ * measurement: it has no completion signal of its own and snapshots its
+ * `end` value when the spec's timing measurement (callback / fcp /
+ * global) completes. A spec containing a `mode:'cpu'` measurement must
+ * therefore also contain at least one timing measurement. At warmup
+ * time each unresolved `CpuMeasurement` is expanded into one
+ * {@link ResolvedCpuMeasurement} per metric in
+ * {@link cpuDefaultMetrics}.
+ *
+ * The reported values are **main renderer thread CPU only** - they
+ * exclude web/service workers, the compositor/raster threads, the GPU
+ * process, the network service, and every other process. The sub-metrics
+ * overlap (e.g. `ScriptDuration` is part of `TaskDuration`) and are NOT
+ * additive.
+ */
+export interface CpuMeasurement extends MeasurementBase {
+  mode: 'cpu';
+}
+
+/**
+ * Internal expansion of a {@link CpuMeasurement} into one concrete
+ * `Performance.getMetrics` metric (e.g. `TaskDuration`,
+ * `ScriptDuration`). Synthesised by the runner before sampling and not
+ * part of the public configuration API.
+ */
+export interface ResolvedCpuMeasurement extends MeasurementBase {
+  mode: 'cpu';
+  /**
+   * The `Performance.getMetrics` metric name this row reports, e.g.
+   * `TaskDuration`. The per-sample value is
+   * `(end - baseline) * 1000` milliseconds of main-thread CPU.
+   */
+  metric: string;
+}
+
+/**
+ * Returns true if a cpu measurement has been resolved (expanded) and so
+ * carries a concrete metric name.
+ */
+export function isResolvedCpuMeasurement(
+  m: RuntimeMeasurement
+): m is ResolvedCpuMeasurement {
+  return (
+    m.mode === 'cpu' && typeof (m as ResolvedCpuMeasurement).metric === 'string'
+  );
+}
+
+/**
+ * Returns true if a cpu measurement is the unresolved (user-supplied)
+ * form: `mode:'cpu'` without a concrete `metric`. These must be expanded
+ * before sampling.
+ */
+export function isUnresolvedCpuMeasurement(
+  m: RuntimeMeasurement
+): m is CpuMeasurement {
+  return m.mode === 'cpu' && !isResolvedCpuMeasurement(m);
+}
+
+/**
+ * Returns true if a measurement is a "timing" measurement - one that
+ * signals when a benchmark has finished its work (callback, an FCP /
+ * performance entry, or a polled global expression). CPU measurements
+ * are companions that snapshot when all timing measurements in their
+ * spec complete; memory and cpu modes are not timing measurements.
+ */
+export function isTimingMeasurement(m: RuntimeMeasurement): boolean {
+  return (
+    m.mode === 'callback' ||
+    m.mode === 'performance' ||
+    m.mode === 'expression'
+  );
+}
+
+export type CommandLineMeasurements =
+  | 'callback'
+  | 'fcp'
+  | 'global'
+  | 'memory'
+  | 'cpu';
 
 export const measurements = new Set<string>([
   'callback',
   'fcp',
   'global',
   'memory',
+  'cpu',
 ]);
 
 /**
